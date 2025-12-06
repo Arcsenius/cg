@@ -1,101 +1,144 @@
 #version 450
-#extension GL_ARB_separate_shader_objects : enable
 
-struct GlobalLight {
-    vec3 ambient_color; float pad1;
-    vec3 directional_color; float pad2;
-    vec3 directional_direction; float pad3;
-};
-
-struct PointLight {
-    vec3 position; float pad1;
-    vec3 color; float pad2;
-};
-
-layout(location = 0) in vec3 f_position;
-layout(location = 1) in vec3 f_normal;
-layout(location = 2) in vec2 f_uv;
+layout(location = 0) in vec3 fragPos;
+layout(location = 1) in vec3 fragNormal;
+layout(location = 2) in vec2 fragUV;
 
 layout(location = 0) out vec4 outColor;
 
-layout(binding = 0, std140) uniform SceneUniforms {
-    mat4 view_projection;
-    mat4 view_inverse;
-    vec3 camera_position; float pad0;
-    GlobalLight global_light;
-    uint num_point_lights; float pad_align[3];
-} scene_ubo;
+// --- СТРУКТУРЫ (Должны байт-в-байт совпадать с C++) ---
 
-layout(binding = 1, std140) uniform ModelUniforms {
-    mat4 model;
-    mat4 normal_matrix;
+struct LightColors {
+    vec3 ambient; float _pad0;
+    vec3 diffuse; float _pad1;
+    vec3 specular; float _pad2;
+};
+
+struct DirectionalLight {
+    vec3 direction;
+    float intensity;
+    LightColors colors;
+};
+
+struct AmbientLight {
+    vec3 color;
+    float intensity;
+    vec3 specular_color;
+    float shininess;
+};
+
+struct PointLight {
+    vec3 position; float _pad0;
+    LightColors colors;
+    float linear;
+    float quadratic;
+    float _pad1;
+    float _pad2;
+};
+
+struct SpotLight {
+    PointLight point_light;
+    vec3 direction;
+    float cut_off;
+    float outer_cut_off;
+    float _pad1;
+    float _pad2;
+};
+
+// --- BINDINGS ---
+
+// Binding 0: Scene Uniforms
+layout(binding = 0) uniform SceneUniforms {
+    mat4 view_projection; // пропускаем
+    vec3 camera_position;
+    uint num_point_lights;
+    uint num_spot_lights;
+    uint _pad_align[3];
+    DirectionalLight directional_light;
+    AmbientLight ambient_light;
+} scene;
+
+// Binding 1: Model Uniforms
+layout(binding = 1) uniform ModelUniforms {
+    mat4 model; // пропускаем
+    mat4 normal_matrix; // пропускаем
     vec3 albedo_color;
     float shininess;
     vec3 specular_color;
-    float pad1;
-} model_ubo;
+} material;
 
-layout(binding = 2, std430) readonly buffer PointLightsBuffer {
+// Binding 2: Point Lights (SSBO)
+layout(std140, binding = 2) readonly buffer PointLightBuffer {
     PointLight lights[];
-} light_ssbo;
+} pointLights;
 
-vec3 calculateBlinnPhong(
-    vec3 lightDir,
-    vec3 lightColor,
-    vec3 camPos,
-    vec3 fragPos,
-    vec3 normal,
-    float attenuation)
-{
-    vec3 N = normalize(normal);
-    vec3 L = normalize(lightDir);
-    vec3 V = normalize(camPos - fragPos);
+// Binding 3: Spot Lights (SSBO)
+layout(std140, binding = 3) readonly buffer SpotLightBuffer {
+    SpotLight lights[];
+} spotLights;
 
-    // Diffuse component
-    float diff = max(dot(N, L), 0.0);
-    vec3 diffuse = model_ubo.albedo_color * lightColor * diff;
 
-    // Specular component (Blinn-Phong)
-    vec3 H = normalize(L + V);
-    float spec = pow(max(dot(N, H), 0.0), model_ubo.shininess);
-    vec3 specular = model_ubo.specular_color * lightColor * spec;
+// --- ФУНКЦИЯ РАСЧЕТА БЛИННА-ФОНГА ---
 
-    return (diffuse + specular) * attenuation;
+vec3 calculateBlinnPhong(LightColors colors, vec3 lightDir, vec3 viewDir, vec3 normal, float attenuation, float intensity) {
+    // Ambient
+    vec3 ambient = colors.ambient * material.albedo_color;
+
+    // Diffuse
+    float diff = max(dot(normal, lightDir), 0.0);
+    vec3 diffuse = diff * colors.diffuse * material.albedo_color;
+
+    // Specular (Blinn-Phong)
+    vec3 halfwayDir = normalize(lightDir + viewDir);
+    float spec = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
+    vec3 specular = spec * colors.specular * material.specular_color;
+
+    return (ambient + diffuse + specular) * attenuation * intensity;
 }
 
 void main() {
-    vec3 N = normalize(f_normal);
+    vec3 N = normalize(fragNormal);
+    vec3 V = normalize(scene.camera_position - fragPos);
     
-    // Ambient lighting
-    vec3 total_lighting = model_ubo.albedo_color * scene_ubo.global_light.ambient_color;
+    vec3 totalLight = vec3(0.0);
 
-    // Directional light
-    vec3 dir_L = -normalize(scene_ubo.global_light.directional_direction);
-    total_lighting += calculateBlinnPhong(
-        dir_L,
-        scene_ubo.global_light.directional_color,
-        scene_ubo.camera_position,
-        f_position,
-        N,
-        1.0);
+    // 1. Ambient Light (Глобальный)
+    totalLight += scene.ambient_light.color * scene.ambient_light.intensity * material.albedo_color;
 
-    // Point lights with inverse square law attenuation
-    for (uint i = 0; i < scene_ubo.num_point_lights; ++i) {
-        PointLight light = light_ssbo.lights[i];
-        vec3 L_vec = light.position - f_position;
-        float distance = length(L_vec);
+    // 2. Directional Light
+    vec3 L_dir = normalize(-scene.directional_light.direction);
+    totalLight += calculateBlinnPhong(scene.directional_light.colors, L_dir, V, N, 1.0, scene.directional_light.intensity);
+
+    // 3. Point Lights
+    for(uint i = 0; i < scene.num_point_lights; ++i) {
+        PointLight light = pointLights.lights[i];
         
-        // Inverse square law: 1.0 / (distance * distance)
-        float attenuation = 1.0 / (distance * distance);
+        vec3 L = normalize(light.position - fragPos);
+        float dist = length(light.position - fragPos);
         
-        total_lighting += calculateBlinnPhong(
-            L_vec,
-            light.color,
-            scene_ubo.camera_position,
-            f_position,
-            N,
-            attenuation);
+        // Затухание (Attenuation)
+        float attenuation = 1.0 / (1.0 + light.linear * dist + light.quadratic * (dist * dist));
+        
+        totalLight += calculateBlinnPhong(light.colors, L, V, N, attenuation, 1.0);
     }
 
-    outColor = vec4(total_lighting, 1.0);
+    // 4. Spot Lights
+    for(uint i = 0; i < scene.num_spot_lights; ++i) {
+        SpotLight sLight = spotLights.lights[i];
+        PointLight light = sLight.point_light; // Базовые свойства как у точечного
+
+        vec3 L = normalize(light.position - fragPos);
+        float dist = length(light.position - fragPos);
+        float attenuation = 1.0 / (1.0 + light.linear * dist + light.quadratic * (dist * dist));
+
+        // Вычисление конуса
+        float theta = dot(L, normalize(-sLight.direction));
+        float epsilon = sLight.cut_off - sLight.outer_cut_off;
+        // smoothstep делает мягкие края
+        float intensity = clamp((theta - sLight.outer_cut_off) / epsilon, 0.0, 1.0);
+
+        totalLight += calculateBlinnPhong(light.colors, L, V, N, attenuation, intensity);
+    }
+
+    outColor = vec4(totalLight, 1.0);
 }
