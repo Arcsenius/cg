@@ -1,3 +1,4 @@
+#include "veekay/input.hpp"
 #include <cstdint>
 #include <climits>
 #include <cstring>
@@ -15,6 +16,11 @@
 #include <imgui.h>
 #include <lodepng.h>
 
+// Если M_PI не определен (зависит от компилятора), определим его
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace {
 
 constexpr uint32_t max_models = 1024;
@@ -24,7 +30,6 @@ struct Vertex {
   veekay::vec3 position;
   veekay::vec3 normal;
   veekay::vec2 uv;
-  // NOTE: You can add more attributes
 };
 
 struct GlobalLight {
@@ -64,7 +69,6 @@ struct Transform {
   veekay::vec3 scale = {1.0f, 1.0f, 1.0f};
   veekay::vec3 rotation = {};
 
-  // NOTE: Model matrix (translation, rotation and scaling)
   veekay::mat4 matrix() const;
 };
 
@@ -76,26 +80,60 @@ struct Model {
   float rotation_speed = 0.0f;
 };
 
+// --- ИСПРАВЛЕННЫЙ КЛАСС CAMERA ---
 struct Camera {
   constexpr static float default_fov = 70.0f;
   constexpr static float default_near_plane = 0.01f;
   constexpr static float default_far_plane = 100.0f;
 
   veekay::vec3 position = {};
-  veekay::vec3 rotation = {};
+  veekay::vec3 rotation = {}; // x = pitch (наклон), y = yaw (поворот)
 
   float fov = default_fov;
   float near_plane = default_near_plane;
   float far_plane = default_far_plane;
 
-  // NOTE: View matrix of camera (inverse of a transform)
-  veekay::mat4 view() const;
+  // Вспомогательная функция для получения вектора "вперед" (нужна для управления WASD)
+  veekay::vec3 getFront() const {
+      const float pitch = rotation.x;
+      const float yaw = rotation.y;
 
-  // NOTE: View and projection composition
+      const veekay::vec3 front = {
+          std::cos(pitch) * std::sin(yaw),
+          std::sin(pitch),
+          -std::cos(pitch) * std::cos(yaw)
+      };
+      return veekay::vec3::normalized(front);
+  }
+
+  // ИСПРАВЛЕНИЕ: Используем вашу оригинальную логику через inverse,
+  // так как veekay::mat4::lookAt отсутствует в вашей версии библиотеки.
+  veekay::mat4 view() const {
+      auto rotation_matrix = [](const veekay::vec3& axis, float angle) {
+          if (std::abs(angle) <= std::numeric_limits<float>::epsilon()) {
+              return veekay::mat4::identity();
+          }
+          return veekay::mat4::rotation(axis, angle);
+      };
+
+      auto translation = veekay::mat4::translation(position);
+      
+      // Порядок вращения для FPS камеры: Сначала Yaw (Y), потом Pitch (X)
+      // Вращение по Z обычно не используется в FPS камерах
+      auto rotate_x = rotation_matrix({1.0f, 0.0f, 0.0f}, rotation.x);
+      auto rotate_y = rotation_matrix({0.0f, 1.0f, 0.0f}, rotation.y);
+      
+      // Матрица мира камеры = Перемещение * Поворот Y * Поворот X
+      veekay::mat4 camera_world_matrix = translation * rotate_y * rotate_x;
+
+      // Матрица вида - это обратная матрица мира камеры
+      return veekay::mat4::inverse(camera_world_matrix);
+  }
+
   veekay::mat4 view_projection(float aspect_ratio) const;
 };
+// ---------------------------------
 
-// NOTE: Scene objects
 inline namespace {
   Camera camera{
     .position = {0.0f, -0.5f, -3.0f}
@@ -104,7 +142,6 @@ inline namespace {
   std::vector<Model> models;
 }
 
-// NOTE: Vulkan objects
 inline namespace {
   VkShaderModule vertex_shader_module;
   VkShaderModule fragment_shader_module;
@@ -238,34 +275,12 @@ veekay::mat4 Transform::matrix() const {
   return translation * rotate_z * rotate_y * rotate_x * scaling;
 }
 
-veekay::mat4 Camera::view() const {
-  auto rotation_matrix = [](const veekay::vec3& axis, float angle) {
-    if (std::abs(angle) <= std::numeric_limits<float>::epsilon()) {
-      return veekay::mat4::identity();
-    }
-    return veekay::mat4::rotation(axis, angle);
-  };
-
-  auto translation = veekay::mat4::translation(position);
-  auto rotate_x = rotation_matrix({1.0f, 0.0f, 0.0f}, rotation.x);
-  auto rotate_y = rotation_matrix({0.0f, 1.0f, 0.0f}, rotation.y);
-  auto rotate_z = rotation_matrix({0.0f, 0.0f, 1.0f}, rotation.z);
-
-  // Camera world matrix: Translation * RotationY * RotationX * RotationZ
-  veekay::mat4 camera_world_matrix = translation * rotate_y * rotate_x * rotate_z;
-
-  // View matrix is the inverse of the camera's world matrix
-  return veekay::mat4::inverse(camera_world_matrix);
-}
-
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
   auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
 
   return view() * projection;
 }
 
-// NOTE: Loads shader byte code from file
-// NOTE: Your shaders are compiled via CMake with this code too, look it up
 VkShaderModule loadShaderModule(const char* path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   size_t size = file.tellg();
@@ -291,9 +306,8 @@ VkShaderModule loadShaderModule(const char* path) {
 
 void initialize(VkCommandBuffer cmd) {
   VkDevice& device = veekay::app.vk_device;
-  VkPhysicalDevice& physical_device = veekay::app.vk_physical_device;
-
-  { // NOTE: Build graphics pipeline
+  
+  { 
     vertex_shader_module = loadShaderModule("./shaders/shader.vert.spv");
     if (!vertex_shader_module) {
       std::cerr << "Failed to load Vulkan vertex shader from file\n";
@@ -310,7 +324,6 @@ void initialize(VkCommandBuffer cmd) {
 
     VkPipelineShaderStageCreateInfo stage_infos[2];
 
-    // NOTE: Vertex shader stage
     stage_infos[0] = VkPipelineShaderStageCreateInfo{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
       .stage = VK_SHADER_STAGE_VERTEX_BIT,
@@ -318,7 +331,6 @@ void initialize(VkCommandBuffer cmd) {
       .pName = "main",
     };
 
-    // NOTE: Fragment shader stage
     stage_infos[1] = VkPipelineShaderStageCreateInfo{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
       .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
@@ -326,21 +338,18 @@ void initialize(VkCommandBuffer cmd) {
       .pName = "main",
     };
 
-    // NOTE: How many bytes does a vertex take?
     VkVertexInputBindingDescription buffer_binding{
       .binding = 0,
       .stride = sizeof(Vertex),
       .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
     };
 
-
-    // NOTE: Declare vertex attributes
     VkVertexInputAttributeDescription attributes[] = {
       {
-        .location = 0, // NOTE: First attribute
-        .binding = 0, // NOTE: First vertex buffer
-        .format = VK_FORMAT_R32G32B32_SFLOAT, // NOTE: 3-component vector of floats
-        .offset = offsetof(Vertex, position), // NOTE: Offset of "position" field in a Vertex struct
+        .location = 0, 
+        .binding = 0, 
+        .format = VK_FORMAT_R32G32B32_SFLOAT, 
+        .offset = offsetof(Vertex, position), 
       },
       {
         .location = 1,
@@ -356,7 +365,6 @@ void initialize(VkCommandBuffer cmd) {
       },
     };
 
-    // NOTE: Describe inputs
     VkPipelineVertexInputStateCreateInfo input_state_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
       .vertexBindingDescriptionCount = 1,
@@ -365,16 +373,11 @@ void initialize(VkCommandBuffer cmd) {
       .pVertexAttributeDescriptions = attributes,
     };
 
-    // NOTE: Every three vertices make up a triangle,
-    //       so our vertex buffer contains a "list of triangles"
     VkPipelineInputAssemblyStateCreateInfo assembly_state_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
       .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
     };
 
-    // NOTE: Declare clockwise triangle order as front-facing
-    //       Discard triangles that are facing away
-    //       Fill triangles, don't draw lines instaed
     VkPipelineRasterizationStateCreateInfo raster_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
       .polygonMode = VK_POLYGON_MODE_FILL,
@@ -383,7 +386,6 @@ void initialize(VkCommandBuffer cmd) {
       .lineWidth = 1.0f,
     };
 
-    // NOTE: Use 1 sample per pixel
     VkPipelineMultisampleStateCreateInfo sample_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
       .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
@@ -405,7 +407,6 @@ void initialize(VkCommandBuffer cmd) {
       .extent = {veekay::app.window_width, veekay::app.window_height},
     };
 
-    // NOTE: Let rasterizer draw on the entire window
     VkPipelineViewportStateCreateInfo viewport_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
 
@@ -416,7 +417,6 @@ void initialize(VkCommandBuffer cmd) {
       .pScissors = &scissor,
     };
 
-    // NOTE: Let rasterizer perform depth-testing and overwrite depth values on condition pass
     VkPipelineDepthStencilStateCreateInfo depth_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
       .depthTestEnable = true,
@@ -424,7 +424,6 @@ void initialize(VkCommandBuffer cmd) {
       .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
     };
 
-    // NOTE: Let fragment shader write all the color channels
     VkPipelineColorBlendAttachmentState attachment_info{
       .colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
                         VK_COLOR_COMPONENT_G_BIT |
@@ -432,7 +431,6 @@ void initialize(VkCommandBuffer cmd) {
                         VK_COLOR_COMPONENT_A_BIT,
     };
 
-    // NOTE: Let rasterizer just copy resulting pixels onto a buffer, don't blend
     VkPipelineColorBlendStateCreateInfo blend_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
 
@@ -479,7 +477,6 @@ void initialize(VkCommandBuffer cmd) {
       }
     }
 
-    // NOTE: Descriptor set layout specification
     {
       VkDescriptorSetLayoutBinding bindings[] = {
         {
@@ -531,14 +528,12 @@ void initialize(VkCommandBuffer cmd) {
       }
     }
 
-    // NOTE: Declare external data sources, only push constants this time
     VkPipelineLayoutCreateInfo layout_info{
       .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
       .setLayoutCount = 1,
       .pSetLayouts = &descriptor_set_layout,
     };
 
-    // NOTE: Create pipeline layout
     if (vkCreatePipelineLayout(device, &layout_info,
                                nullptr, &pipeline_layout) != VK_SUCCESS) {
       std::cerr << "Failed to create Vulkan pipeline layout\n";
@@ -561,7 +556,6 @@ void initialize(VkCommandBuffer cmd) {
       .renderPass = veekay::app.vk_render_pass,
     };
 
-    // NOTE: Create graphics pipeline
     if (vkCreateGraphicsPipelines(device, nullptr,
                                   1, &info, nullptr, &pipeline) != VK_SUCCESS) {
       std::cerr << "Failed to create Vulkan pipeline\n";
@@ -581,7 +575,6 @@ void initialize(VkCommandBuffer cmd) {
     nullptr,
     VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
-  // Create point lights buffer for up to 16 lights
   point_lights_buffer = new veekay::graphics::Buffer(
     sizeof(PointLight) * max_point_lights,
     nullptr,
@@ -640,7 +633,6 @@ void initialize(VkCommandBuffer cmd) {
                            write_infos, 0, nullptr);
   }
 
-  // NOTE: Cone mesh initialization
   {
     constexpr uint32_t cone_segments = 80;
     const float cone_radius = 0.6f;
@@ -648,7 +640,6 @@ void initialize(VkCommandBuffer cmd) {
     cone_mesh = createConeMesh(cone_segments, cone_radius, cone_height);
   }
 
-  // NOTE: Add animated cones to the scene
   {
     struct ConeConfig {
       veekay::vec3 position;
@@ -686,7 +677,6 @@ void initialize(VkCommandBuffer cmd) {
   }
 }
 
-// NOTE: Destroy resources here, do not cause leaks in your program!
 void shutdown() {
   VkDevice& device = veekay::app.vk_device;
 
@@ -709,7 +699,40 @@ void shutdown() {
 void update(double time) {
   ImGui::Begin("Controls:");
   ImGui::SliderFloat("Rotation speed", &rotation_speed_multiplier, 0.0f, 5.0f);
+  ImGui::Text("Camera Pos: (%.2f, %.2f, %.2f)", camera.position.x, camera.position.y, camera.position.z);
   ImGui::End();
+
+  // --- УПРАВЛЕНИЕ ---
+  if (!ImGui::IsWindowHovered()) { 
+    using namespace veekay::input;
+    
+    constexpr float move_speed = 0.1f;
+
+    // Мышь
+    if (mouse::isButtonDown(mouse::Button::left)) {
+        constexpr float sensitivity = 0.003f;
+        auto move_delta = mouse::cursorDelta();
+
+        camera.rotation.y += move_delta[0] * sensitivity;
+        camera.rotation.x += move_delta[1] * sensitivity;
+    }
+
+    // Клавиатура
+    const veekay::vec3 front = camera.getFront();
+    veekay::vec3 up = {0.0f, 1.0f, 0.0f};
+    const veekay::vec3 right = veekay::vec3::normalized(veekay::vec3::cross(front, up));
+    // Корректируем UP для вертикального стрейфа
+    up = veekay::vec3::normalized(veekay::vec3::cross(right, front));
+
+    if (keyboard::isKeyDown(keyboard::Key::w)) camera.position -= front * move_speed;
+    if (keyboard::isKeyDown(keyboard::Key::s)) camera.position += front * move_speed;
+    if (keyboard::isKeyDown(keyboard::Key::d)) camera.position += right * move_speed;
+    if (keyboard::isKeyDown(keyboard::Key::a)) camera.position -= right * move_speed;
+
+    if (keyboard::isKeyDown(keyboard::Key::q)) camera.position -= up * move_speed;
+    if (keyboard::isKeyDown(keyboard::Key::z)) camera.position += up * move_speed;
+  }
+  // ------------------
 
   float delta_time = 0.0f;
   if (has_previous_time) {
@@ -727,11 +750,8 @@ void update(double time) {
     model.transform.rotation += model.rotation_axis * angle_delta;
   }
 
-
-  // Create dynamic point lights
   std::vector<PointLight> point_lights;
   
-  // Add an orbiting point light
   const float orbit_radius = 3.0f;
   const float orbit_height = 1.5f;
   PointLight orbiting_light{
@@ -740,14 +760,13 @@ void update(double time) {
       orbit_height,
       orbit_radius * std::sin(static_cast<float>(time))
     },
-    .color = {1.0f, 0.8f, 0.6f}, // Warm white/orange light
+    .color = {1.0f, 0.8f, 0.6f},
   };
   point_lights.push_back(orbiting_light);
 
-  // Add a stationary point light
   PointLight stationary_light{
     .position = {0.0f, 2.0f, 0.0f},
-    .color = {0.6f, 0.8f, 1.0f}, // Cool blue light
+    .color = {0.6f, 0.8f, 1.0f},
   };
   point_lights.push_back(stationary_light);
 
@@ -789,7 +808,6 @@ void update(double time) {
     *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
   }
 
-  // Copy point lights to buffer
   if (!point_lights.empty()) {
     std::memcpy(point_lights_buffer->mapped_region, point_lights.data(),
                 sizeof(PointLight) * point_lights.size());
@@ -799,7 +817,7 @@ void update(double time) {
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
   vkResetCommandBuffer(cmd, 0);
 
-  { // NOTE: Start recording rendering commands
+  { 
     VkCommandBufferBeginInfo info{
       .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
       .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
@@ -808,7 +826,7 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
     vkBeginCommandBuffer(cmd, &info);
   }
 
-  { // NOTE: Use current swapchain framebuffer and clear it
+  { 
     VkClearValue clear_color{.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
     VkClearValue clear_depth{.depthStencil = {1.0f, 0}};
 
