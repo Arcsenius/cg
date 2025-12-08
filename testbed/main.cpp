@@ -441,29 +441,43 @@ void shutdown() {
 }
 
 void update(double time) {
-  // --- UI СВЕТА (КАК У ДРУГА) ---
+  // --- UI СВЕТА ---
   ImGui::Begin("Controls");
   ImGui::SliderFloat("Rotation speed", &rotation_speed_multiplier, 0.0f, 5.0f);
   
+  // 1. Directional Light
   if (ImGui::CollapsingHeader("Directional Light")) {
+      ImGui::PushID("dir_light"); // <--- НАЧАЛО УНИКАЛЬНОЙ ЗОНЫ
       ImGui::SliderFloat3("Direction", &dir_light.direction.x, -1.0f, 1.0f);
       ImGui::SliderFloat("Intensity", &dir_light.intensity, 0.0f, 5.0f);
       ImGui::ColorEdit3("Ambient", &dir_light.colors.ambient.x);
       ImGui::ColorEdit3("Diffuse", &dir_light.colors.diffuse.x);
       ImGui::ColorEdit3("Specular", &dir_light.colors.specular.x);
+      ImGui::PopID(); // <--- КОНЕЦ УНИКАЛЬНОЙ ЗОНЫ
   }
+
+  // 2. Ambient Light
   if (ImGui::CollapsingHeader("Ambient Light")) {
+      ImGui::PushID("amb_light"); // Уникальный ID для этого блока
       ImGui::ColorEdit3("Color", &ambient_light.color.x);
       ImGui::SliderFloat("Intensity", &ambient_light.intensity, 0.0f, 1.0f);
+      ImGui::PopID();
   }
+
+  // 3. Point Light
   if (ImGui::CollapsingHeader("Point Light 0")) {
+      ImGui::PushID("point_light_0"); // Теперь "Diffuse" внутри этого блока не конфликтует с другими
       PointLight& pl = point_lights[0];
       ImGui::SliderFloat3("Position", &pl.position.x, -5.0f, 5.0f);
       ImGui::ColorEdit3("Diffuse", &pl.colors.diffuse.x);
       ImGui::SliderFloat("Linear", &pl.linear, 0.001f, 1.0f);
       ImGui::SliderFloat("Quadratic", &pl.quadratic, 0.001f, 1.0f);
+      ImGui::PopID();
   }
+
+  // 4. Spot Light
   if (ImGui::CollapsingHeader("Spot Light 0")) {
+      ImGui::PushID("spot_light_0"); // Уникальный ID
       SpotLight& sl = spot_lights[0];
       ImGui::SliderFloat3("Position", &sl.point_light.position.x, -5.0f, 5.0f);
       ImGui::SliderFloat3("Direction", &sl.direction.x, -1.0f, 1.0f);
@@ -471,10 +485,17 @@ void update(double time) {
       
       float cutoff_deg = std::acos(sl.cut_off) * 180.0f / (float)M_PI;
       float outer_deg = std::acos(sl.outer_cut_off) * 180.0f / (float)M_PI;
+      
+      // Используем ##, чтобы скрыть ID из названия, если хотим одинаковые подписи
+      // Но внутри PushID это происходит автоматически для внутренних ID
       ImGui::SliderFloat("Cutoff", &cutoff_deg, 0.0f, 45.0f);
       ImGui::SliderFloat("Outer", &outer_deg, 0.0f, 45.0f);
+      
+      if (outer_deg < cutoff_deg) outer_deg = cutoff_deg; // Защита от инверсии
+
       sl.cut_off = std::cos(Camera::toRadians(cutoff_deg));
       sl.outer_cut_off = std::cos(Camera::toRadians(outer_deg));
+      ImGui::PopID();
   }
   ImGui::End();
   // -----------------------------
@@ -544,7 +565,6 @@ void update(double time) {
   if (!spot_lights.empty())
     std::memcpy(spot_lights_buffer->mapped_region, spot_lights.data(), sizeof(SpotLight) * spot_lights.size());
 }
-
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
   vkResetCommandBuffer(cmd, 0);
   VkCommandBufferBeginInfo info{.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO, .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT};
