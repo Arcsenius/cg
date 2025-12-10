@@ -452,7 +452,6 @@ void update(double time) {
       
       float cutoff_deg = std::acos(sl.cut_off) * 180.0f / (float)M_PI;
       float outer_deg = std::acos(sl.outer_cut_off) * 180.0f / (float)M_PI;
-      // Но внутри PushID это происходит автоматически для внутренних ID
       ImGui::SliderFloat("Cutoff", &cutoff_deg, 0.0f, 45.0f);
       ImGui::SliderFloat("Outer", &outer_deg, 0.0f, 45.0f);
       
