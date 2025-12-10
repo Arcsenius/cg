@@ -10,7 +10,8 @@ layout(location = 2) out vec2 fragUV;
 
 layout(binding = 0) uniform SceneUniforms {
     mat4 view_projection;
-    // Остальное не нужно в вертексном
+    vec4 camera_position;
+    // Остальные поля не нужны в vert
 } scene;
 
 layout(binding = 1) uniform ModelUniforms {
@@ -19,17 +20,13 @@ layout(binding = 1) uniform ModelUniforms {
     vec3 albedo_color;
     float shininess;
     vec3 specular_color;
+    float objectType;
 } mesh;
 
 void main() {
     vec4 worldPosition = mesh.model * vec4(inPosition, 1.0);
     fragPos = worldPosition.xyz;
-    
-    // Важно: нормали должны быть нормализованы после интерполяции, 
-    // но здесь мы просто передаем их дальше.
     fragNormal = mat3(mesh.normal_matrix) * inNormal;
-    
     fragUV = inUV;
-    
     gl_Position = scene.view_projection * worldPosition;
 }
