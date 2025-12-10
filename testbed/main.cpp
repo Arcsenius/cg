@@ -31,8 +31,6 @@ struct Vertex {
   veekay::vec2 uv;
 };
 
-// --- НОВЫЕ СТРУКТУРЫ СВЕТА (КАК У ДРУГА) ---
-
 struct LightColors {
     veekay::vec3 ambient; float _pad0;
     veekay::vec3 diffuse; float _pad1;
@@ -74,8 +72,6 @@ struct SpotLight {
     float _pad1;
     float _pad2;
 };
-
-// Обновленная структура Uniform-ов сцены
 struct alignas(16) SceneUniforms {
     veekay::mat4 view_projection;
     veekay::vec3 camera_position;
@@ -85,7 +81,6 @@ struct alignas(16) SceneUniforms {
     DirectionalLight directional_light;
     AmbientLight ambient_light;
 };
-// ------------------------------------------
 
 struct ModelUniforms {
   veekay::mat4 model;
@@ -155,16 +150,12 @@ struct Camera {
 
   veekay::mat4 view_projection(float aspect_ratio) const;
 };
-
-// ГЛОБАЛЬНЫЕ ПЕРЕМЕННЫЕ СЦЕНЫ (Чтобы UI мог их менять)
 inline namespace {
   Camera camera{
     .position = {0.0f, -0.5f, -3.0f}
   };
 
   std::vector<Model> models;
-
-  // Данные света вынесены сюда для сохранения состояния
   DirectionalLight dir_light{
       .direction = {0.3f, -1.0f, 0.5f},
       .intensity = 0.8f,
@@ -199,8 +190,6 @@ inline namespace {
 
   veekay::graphics::Buffer* scene_uniforms_buffer;
   veekay::graphics::Buffer* model_uniforms_buffer;
-  
-  // Буферы для источников света
   veekay::graphics::Buffer* point_lights_buffer;
   veekay::graphics::Buffer* spot_lights_buffer; // <--- НОВЫЙ БУФЕР
 
@@ -214,7 +203,6 @@ inline namespace {
 }
 
 Mesh createConeMesh(uint32_t segments, float radius, float height) {
-    // ... (Код создания меша без изменений)
   segments = std::max(segments, 3u);
   std::vector<Vertex> vertices;
   std::vector<uint32_t> indices;
@@ -321,8 +309,6 @@ void initialize(VkCommandBuffer cmd) {
     VkPipelineDepthStencilStateCreateInfo depth_info{VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO, nullptr, 0, true, true, VK_COMPARE_OP_LESS_OR_EQUAL, false, false, {}, {}};
     VkPipelineColorBlendAttachmentState attachment_info{false, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, VK_BLEND_FACTOR_ZERO, VK_BLEND_FACTOR_ZERO, VK_BLEND_OP_ADD, 0xF};
     VkPipelineColorBlendStateCreateInfo blend_info{VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO, nullptr, 0, false, VK_LOGIC_OP_COPY, 1, &attachment_info, {0.0f,0.0f,0.0f,0.0f}};
-
-    // --- ОБНОВЛЕННЫЕ ДЕСКРИПТОРЫ (4 ШТУКИ) ---
     {
       VkDescriptorPoolSize pools[] = {
         {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 8},
@@ -353,14 +339,10 @@ void initialize(VkCommandBuffer cmd) {
     VkGraphicsPipelineCreateInfo info{VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO, nullptr, 0, 2, stage_infos, &input_state_info, &assembly_state_info, nullptr, &viewport_info, &raster_info, &sample_info, &depth_info, &blend_info, nullptr, pipeline_layout, veekay::app.vk_render_pass, 0, VK_NULL_HANDLE, 0};
     vkCreateGraphicsPipelines(device, nullptr, 1, &info, nullptr, &pipeline);
   }
-
-  // Создание буферов
   scene_uniforms_buffer = new veekay::graphics::Buffer(sizeof(SceneUniforms), nullptr, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   model_uniforms_buffer = new veekay::graphics::Buffer(max_models * veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms)), nullptr, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
   point_lights_buffer = new veekay::graphics::Buffer(sizeof(PointLight) * max_lights, nullptr, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT);
   spot_lights_buffer = new veekay::graphics::Buffer(sizeof(SpotLight) * max_lights, nullptr, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT); // NEW
-
-  // Привязка буферов к дескрипторам
   {
     VkDescriptorBufferInfo buffer_infos[] = {
       {scene_uniforms_buffer->buffer, 0, sizeof(SceneUniforms)},
@@ -376,14 +358,10 @@ void initialize(VkCommandBuffer cmd) {
     };
     vkUpdateDescriptorSets(device, 4, write_infos, 0, nullptr);
   }
-
-  // Инициализация мешей
   {
     constexpr uint32_t cone_segments = 80;
     cone_mesh = createConeMesh(cone_segments, 0.6f, 1.4f);
   }
-
-  // Инициализация моделей (Конусы)
   {
     struct ConeConfig { veekay::vec3 pos; veekay::vec3 scale; veekay::vec3 axis; float speed; };
     const std::array<ConeConfig, 5> cones = {{
@@ -407,8 +385,6 @@ void initialize(VkCommandBuffer cmd) {
       models.emplace_back(instance);
     }
   }
-
-  // Инициализация света (Начальные значения)
   point_lights.push_back({
       .position = {0.0f, 2.0f, 0.0f},
       .colors = {.ambient={0.1f,0.1f,0.1f}, .diffuse={0.6f,0.8f,1.0f}, .specular={1.0f,1.0f,1.0f}},
@@ -441,11 +417,8 @@ void shutdown() {
 }
 
 void update(double time) {
-  // --- UI СВЕТА ---
   ImGui::Begin("Controls");
   ImGui::SliderFloat("Rotation speed", &rotation_speed_multiplier, 0.0f, 5.0f);
-  
-  // 1. Directional Light
   if (ImGui::CollapsingHeader("Directional Light")) {
       ImGui::PushID("dir_light"); // <--- НАЧАЛО УНИКАЛЬНОЙ ЗОНЫ
       ImGui::SliderFloat3("Direction", &dir_light.direction.x, -1.0f, 1.0f);
@@ -455,16 +428,12 @@ void update(double time) {
       ImGui::ColorEdit3("Specular", &dir_light.colors.specular.x);
       ImGui::PopID(); // <--- КОНЕЦ УНИКАЛЬНОЙ ЗОНЫ
   }
-
-  // 2. Ambient Light
   if (ImGui::CollapsingHeader("Ambient Light")) {
       ImGui::PushID("amb_light"); // Уникальный ID для этого блока
       ImGui::ColorEdit3("Color", &ambient_light.color.x);
       ImGui::SliderFloat("Intensity", &ambient_light.intensity, 0.0f, 1.0f);
       ImGui::PopID();
   }
-
-  // 3. Point Light
   if (ImGui::CollapsingHeader("Point Light 0")) {
       ImGui::PushID("point_light_0"); // Теперь "Diffuse" внутри этого блока не конфликтует с другими
       PointLight& pl = point_lights[0];
@@ -474,8 +443,6 @@ void update(double time) {
       ImGui::SliderFloat("Quadratic", &pl.quadratic, 0.001f, 1.0f);
       ImGui::PopID();
   }
-
-  // 4. Spot Light
   if (ImGui::CollapsingHeader("Spot Light 0")) {
       ImGui::PushID("spot_light_0"); // Уникальный ID
       SpotLight& sl = spot_lights[0];
@@ -485,8 +452,6 @@ void update(double time) {
       
       float cutoff_deg = std::acos(sl.cut_off) * 180.0f / (float)M_PI;
       float outer_deg = std::acos(sl.outer_cut_off) * 180.0f / (float)M_PI;
-      
-      // Используем ##, чтобы скрыть ID из названия, если хотим одинаковые подписи
       // Но внутри PushID это происходит автоматически для внутренних ID
       ImGui::SliderFloat("Cutoff", &cutoff_deg, 0.0f, 45.0f);
       ImGui::SliderFloat("Outer", &outer_deg, 0.0f, 45.0f);
@@ -498,9 +463,7 @@ void update(double time) {
       ImGui::PopID();
   }
   ImGui::End();
-  // -----------------------------
 
-  // УПРАВЛЕНИЕ КАМЕРОЙ
   if (!ImGui::IsWindowHovered()) { 
     using namespace veekay::input;
     constexpr float move_speed = 0.1f;
@@ -521,8 +484,6 @@ void update(double time) {
     if (keyboard::isKeyDown(keyboard::Key::q)) camera.position -= up * move_speed;
     if (keyboard::isKeyDown(keyboard::Key::z)) camera.position += up * move_speed;
   }
-
-  // ОБНОВЛЕНИЕ МОДЕЛЕЙ
   float delta_time = 0.0f;
   if (has_previous_time) delta_time = std::max((float)(time - previous_time), 0.0f);
   else has_previous_time = true;
@@ -530,8 +491,6 @@ void update(double time) {
   for (Model& model : models) {
     model.transform.rotation += model.rotation_axis * (model.rotation_speed * delta_time * rotation_speed_multiplier);
   }
-
-  // ОТПРАВКА ДАННЫХ (Scene Uniforms)
   float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
   SceneUniforms scene_uniforms{
     .view_projection = camera.view_projection(aspect_ratio),
@@ -542,8 +501,6 @@ void update(double time) {
     .ambient_light = ambient_light
   };
   *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
-
-  // ОТПРАВКА ДАННЫХ (Model Uniforms)
   std::vector<ModelUniforms> model_uniforms(models.size());
   for (size_t i = 0; i < models.size(); ++i) {
     model_uniforms[i] = {
@@ -558,8 +515,6 @@ void update(double time) {
   for (size_t i = 0; i < model_uniforms.size(); ++i) {
     *(ModelUniforms*)((char*)model_uniforms_buffer->mapped_region + i * alignment) = model_uniforms[i];
   }
-
-  // ОТПРАВКА СВЕТА В БУФЕРЫ
   if (!point_lights.empty())
     std::memcpy(point_lights_buffer->mapped_region, point_lights.data(), sizeof(PointLight) * point_lights.size());
   if (!spot_lights.empty())
