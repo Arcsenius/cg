@@ -1,109 +1,97 @@
 #version 450
 
-layout(location = 0) in vec3 fragPos;
-layout(location = 1) in vec3 fragNormal;
-layout(location = 2) in vec2 fragUV;
+layout(location = 0) in vec3 frag_position;
+layout(location = 1) in vec3 frag_normal;
+layout(location = 2) in vec2 frag_uv;
+layout(location = 3) in vec4 frag_position_light_space;
 
-layout(location = 0) out vec4 outColor;
+layout(location = 0) out vec4 out_color;
 
-struct LightColors { vec3 ambient; float _pad0; vec3 diffuse; float _pad1; vec3 specular; float _pad2; };
-struct DirectionalLight { vec3 direction; float intensity; LightColors colors; };
-struct AmbientLight { vec3 color; float intensity; vec3 specular_color; float shininess; };
-struct PointLight { vec3 position; float _pad0; LightColors colors; float linear; float quadratic; float _pad1; float _pad2; };
-struct SpotLight { PointLight point_light; vec3 direction; float cut_off; float outer_cut_off; float _pad1; float _pad2; };
+struct DirectionalLight {
+    vec3 direction;
+    float _pad0;
+    vec3 ambient;
+    float _pad1;
+    vec3 diffuse;
+    float _pad2;
+    vec3 specular;
+    float _pad3;
+};
 
-// Binding 0
 layout(binding = 0) uniform SceneUniforms {
     mat4 view_projection;
-    vec4 camera_position;
-    uint num_point_lights;
-    uint num_spot_lights;
-    float _pad_align[2];
+    vec3 view_position;
+    float _pad0;
     DirectionalLight directional_light;
-    AmbientLight ambient_light;
+    uint point_light_count;
+    uint spot_light_count;
+    float _pad1[2];
+    mat4 light_space_matrix;
 } scene;
 
-// Binding 1
 layout(binding = 1) uniform ModelUniforms {
     mat4 model;
-    mat4 normal_matrix;
     vec3 albedo_color;
     float shininess;
     vec3 specular_color;
-    float objectType; // 0=TNT, 1=Brick, 2=Sun
+    float _pad0;
 } material;
 
-layout(std140, binding = 2) readonly buffer PointLightBuffer { PointLight lights[]; } pointLights;
-layout(std140, binding = 3) readonly buffer SpotLightBuffer { SpotLight lights[]; } spotLights;
+layout(binding = 2) uniform sampler2D material_texture;
+layout(binding = 3) uniform sampler2DShadow shadow_map;
+layout(binding = 4) uniform sampler2D shadow_map_raw;
 
-layout(binding = 4) uniform sampler2D texSide;
-layout(binding = 5) uniform sampler2D texTop;
-layout(binding = 6) uniform sampler2D texBottom;
-layout(binding = 7) uniform sampler2D texBrick;
-layout(binding = 8) uniform sampler2D texSun;
+float calculateShadow(vec4 frag_pos_light_space) {
+    vec3 proj_coords = frag_pos_light_space.xyz / frag_pos_light_space.w;
+    proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
+    
+    if (proj_coords.z > 1.0 || proj_coords.z < 0.0 ||
+        proj_coords.x < 0.0 || proj_coords.x > 1.0 ||
+        proj_coords.y < 0.0 || proj_coords.y > 1.0) {
+        return 1.0;
+    }
+    
+    float bias = 0.005;
+    float shadow = 0.0;
+    vec2 texel_size = 1.0 / vec2(textureSize(shadow_map_raw, 0));
+    
+    for(int x = -1; x <= 1; ++x) {
+        for(int y = -1; y <= 1; ++y) {
+            vec2 offset = vec2(x, y) * texel_size;
+            shadow += texture(shadow_map, vec3(proj_coords.xy + offset, proj_coords.z - bias));
+        }
+    }
+    shadow /= 9.0;
+    
+    return shadow;
+}
 
-vec3 calculateBlinnPhong(LightColors colors, vec3 lightDir, vec3 viewDir, vec3 normal, float attenuation, float intensity, vec3 texColor) {
-    vec3 ambient = colors.ambient * texColor;
-    float diff = max(dot(normal, lightDir), 0.0);
-    vec3 diffuse = diff * colors.diffuse * texColor;
-    vec3 halfwayDir = normalize(lightDir + viewDir);
-    float spec = pow(max(dot(normal, halfwayDir), 0.0), material.shininess);
-    vec3 specular = spec * colors.specular * material.specular_color;
-    return (ambient + diffuse + specular) * attenuation * intensity;
+vec3 calcDirectionalLight(DirectionalLight light, vec3 normal, vec3 view_dir) {
+    vec3 light_dir = normalize(-light.direction);
+    vec3 ambient = light.ambient * material.albedo_color;
+    float diff = max(dot(normal, light_dir), 0.0);
+    vec3 diffuse = light.diffuse * diff * material.albedo_color;
+    vec3 halfway_dir = normalize(light_dir + view_dir);
+    float spec = pow(max(dot(normal, halfway_dir), 0.0), material.shininess);
+    vec3 specular = light.specular * spec * material.specular_color;
+    return ambient + diffuse + specular;
 }
 
 void main() {
-    int type = int(material.objectType);
-    vec4 sampledColor;
-
-    if (type == 2) { 
-        outColor = texture(texSun, fragUV); // Солнце светится само
-        return; 
-    }
-    else if (type == 1) {
-        // Кирпич + тайлинг
-        sampledColor = texture(texBrick, fragUV * 6.0);
-    } 
-    else {
-        // TNT
-        vec3 N_check = normalize(fragNormal);
-        if (N_check.y > 0.9) sampledColor = texture(texTop, fragUV);
-        else if (N_check.y < -0.9) sampledColor = texture(texBottom, fragUV);
-        else sampledColor = texture(texSide, fragUV);
-    }
-
-    vec3 albedo = sampledColor.rgb * material.albedo_color;
-    
-    // --- ВАЖНЕЙШЕЕ ИСПРАВЛЕНИЕ ---
-    vec3 N = normalize(fragNormal);
-    if (type == 1) {
-        // Если это комната, инвертируем нормаль, чтобы она смотрела ВНУТРЬ.
-        // Иначе свет из центра бьет в "спину" стене, и стена черная.
-        N = -N; 
-    }
-
-    vec3 V = normalize(scene.camera_position.xyz - fragPos);
-
-    vec3 totalLight = vec3(0.0);
-
-    // 1. Ambient
-    totalLight += scene.ambient_light.color * scene.ambient_light.intensity * albedo;
-
-    // 2. Directional
-    vec3 L_dir = normalize(-scene.directional_light.direction);
-    totalLight += calculateBlinnPhong(scene.directional_light.colors, L_dir, V, N, 1.0, scene.directional_light.intensity, albedo);
-
-    // 3. Point Lights
-    for(uint i = 0; i < scene.num_point_lights; ++i) {
-        PointLight light = pointLights.lights[i];
-        vec3 L = normalize(light.position - fragPos);
-        float dist = length(light.position - fragPos);
-        
-        // Более мягкое затухание для большой комнаты
-        float attenuation = 1.0 / (1.0 + light.linear * dist + light.quadratic * (dist * dist));
-        
-        totalLight += calculateBlinnPhong(light.colors, L, V, N, attenuation, 1.0, albedo);
-    }
-
-    outColor = vec4(totalLight, 1.0);
+    vec3 normal = normalize(frag_normal);
+    vec3 view_dir = normalize(scene.view_position - frag_position);
+    vec3 result = vec3(0.0);
+    float shadow = calculateShadow(frag_position_light_space);
+    vec3 ambient = scene.directional_light.ambient * material.albedo_color;
+    result += ambient;
+    vec3 light_dir = normalize(-scene.directional_light.direction);
+    float diff = max(dot(normal, light_dir), 0.0);
+    vec3 diffuse = scene.directional_light.diffuse * diff * material.albedo_color;
+    vec3 halfway_dir = normalize(light_dir + view_dir);
+    float spec = pow(max(dot(normal, halfway_dir), 0.0), material.shininess);
+    vec3 specular = scene.directional_light.specular * spec * material.specular_color;
+    result += (diffuse + specular) * shadow;
+    vec3 texture_color = texture(material_texture, frag_uv).rgb;
+    result *= texture_color;
+    out_color = vec4(result, 1.0);
 }
