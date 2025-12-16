@@ -744,13 +744,21 @@ void initialize(VkCommandBuffer cmd) {
             .rotation = {0.0f, 0.0f, 0.0f}
         },
         .material = Material{
-            .albedo = veekay::vec3{0.95f, 0.55f, 0.2f}, // Оранжеватый оттенок
-            .specular = veekay::vec3{0.3f, 0.3f, 0.2f},
-            .shininess = 32.0f,
+            // БЫЛО: Оранжевый, который затемнял текстуру
+            // СТАЛО: Чистый белый, чтобы текстура была максимально яркой
+            .albedo = veekay::vec3{1.0f, 1.0f, 1.0f}, 
+            
+            // БЫЛО: {0.3f, 0.3f, 0.2f} (Тусклый блик)
+            // СТАЛО: Яркий белый блик
+            .specular = veekay::vec3{1.0f, 1.0f, 1.0f},
+            
+            // Сделаем блик чуть более "размытым" и широким (меньше число = шире блик)
+            .shininess = 32.0f, 
+            
             .texture = cone_texture,
             .sampler = cone_sampler,
         },
-        .rotation_axis = {0.5f, 1.0f, 0.2f} // Ось вращения
+        .rotation_axis = {0.5f, 1.0f, 0.2f}
     });
 
     // --- SHADOW SETUP ---
@@ -1409,9 +1417,16 @@ void update(double time) {
         .view_projection = camera.view_projection(aspect_ratio),
         .view_position = camera.position,
         .directional_light = DirectionalLight{
-            .direction = {-0.6f, 1.0f, -0.6f},
-            .ambient = {0.2f, 0.2f, 0.2f},
-            .diffuse = {1.0f, 1.0f, 1.0f},
+            // БЫЛО: {-0.6f, 1.0f, -0.6f} (Свет почти сверху)
+            // СТАЛО: Свет падает под углом 45 градусов, освещая бока конуса лучше
+            .direction = {-1.0f, 1.0f, -1.0f}, 
+            
+            // БЫЛО: {0.2f, ...}
+            // СТАЛО: Чуть светлее тени
+            .ambient = {0.3f, 0.3f, 0.3f},
+            
+            // Диффузный свет на максимум
+            .diffuse = {1.2f, 1.2f, 1.2f}, // Можно даже > 1.0 для яркости
             .specular = {1.0f, 1.0f, 1.0f},
         },
         .light_space_matrix = light_space_matrix,
