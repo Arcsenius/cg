@@ -128,7 +128,8 @@ inline namespace {
     veekay::graphics::Buffer* model_uniforms_buffer;
 
     Mesh plane_mesh;
-    Mesh cone_mesh; // Заменили пирамиду и цилиндр на конус
+    Mesh cone_mesh;
+    Mesh cube_mesh; // Меш куба
 
     veekay::graphics::Texture* missing_texture;
     VkSampler missing_texture_sampler;
@@ -136,8 +137,11 @@ inline namespace {
     veekay::graphics::Texture* floor_texture;
     VkSampler floor_sampler;
 
-    veekay::graphics::Texture* cone_texture; // Текстура для конуса
+    veekay::graphics::Texture* cone_texture;
     VkSampler cone_sampler;
+
+    veekay::graphics::Texture* cube_texture; // Текстура куба
+    VkSampler cube_sampler;
 
     constexpr uint32_t shadow_map_size = 2048;
 
@@ -164,7 +168,7 @@ inline namespace {
     constexpr uint32_t max_descriptor_sets = 32;
 }
 
-// --- ФУНКЦИЯ СОЗДАНИЯ КОНУСА ИЗ ВТОРОГО ПРИМЕРА ---
+// --- ФУНКЦИЯ СОЗДАНИЯ КОНУСА (Исправленная: центр в середине) ---
 Mesh createConeMesh(uint32_t segments, float radius, float height) {
     segments = std::max(segments, 3u);
     std::vector<Vertex> vertices;
@@ -172,39 +176,26 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
     vertices.reserve(1 + segments + 1 + segments);
     indices.reserve(segments * 6);
     
-    // Сдвиг по Y для центрирования
     float y_offset = -height / 2.0f;
-    
-    // Рассчитываем угол наклона нормали
-    // Нормаль боковой поверхности конуса имеет постоянный наклон
     float slope = radius / height;
 
-    // --- Вершина конуса ---
-    // У вершины нормаль должна смотреть вверх, иначе верхушка будет черной
+    // Вершина
     vertices.push_back(Vertex{{0.0f, height + y_offset, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.0f}});
     
     const float circumference = 2.0f * float(M_PI);
     
-    // --- Боковая поверхность ---
+    // Бока
     for (uint32_t i = 0; i < segments; ++i) {
         float angle = circumference * (float(i) / float(segments));
-        
-        // Координаты на единичной окружности (для нормали)
         float nx = std::cos(angle);
         float nz = std::sin(angle);
-        
-        // Координаты позиции (масштабируем на радиус)
         float x = radius * nx;
         float z = radius * nz;
-        
-        // ВАЖНО: Нормаль строится от единичного вектора, а не от позиции x/z
-        // Компонент Y (slope) отвечает за наклон грани
         veekay::vec3 normal = veekay::vec3::normalized({nx, slope, nz});
-        
         vertices.push_back(Vertex{{x, 0.0f + y_offset, z}, normal, {float(i) / float(segments), 1.0f}});
     }
     
-    // --- Основание ---
+    // Основание
     const uint32_t base_center_index = static_cast<uint32_t>(vertices.size());
     vertices.push_back(Vertex{{0.0f, 0.0f + y_offset, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
     
@@ -215,7 +206,6 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
         vertices.push_back(Vertex{{x, 0.0f + y_offset, z}, {0.0f, -1.0f, 0.0f}, {0.5f + (x / (2.0f * radius)), 0.5f + (z / (2.0f * radius))}});
     }
     
-    // Индексы
     const uint32_t tip_index = 0;
     const uint32_t side_start = 1;
     const uint32_t base_start = base_center_index + 1;
@@ -231,6 +221,59 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
         indices.push_back(base_center_index); indices.push_back(current); indices.push_back(next);
     }
     
+    Mesh mesh;
+    mesh.vertex_buffer = new veekay::graphics::Buffer(vertices.size() * sizeof(Vertex), vertices.data(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    mesh.index_buffer = new veekay::graphics::Buffer(indices.size() * sizeof(uint32_t), indices.data(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    mesh.indices = static_cast<uint32_t>(indices.size());
+    return mesh;
+}
+
+// --- ФУНКЦИЯ СОЗДАНИЯ КУБА ---
+Mesh createCubeMesh(float size) {
+    float h = size * 0.5f;
+
+    std::vector<Vertex> vertices = {
+        // Front
+        {{-h,  h,  h}, { 0.0f,  0.0f,  1.0f}, {0.0f, 0.0f}},
+        {{ h,  h,  h}, { 0.0f,  0.0f,  1.0f}, {1.0f, 0.0f}},
+        {{ h, -h,  h}, { 0.0f,  0.0f,  1.0f}, {1.0f, 1.0f}},
+        {{-h, -h,  h}, { 0.0f,  0.0f,  1.0f}, {0.0f, 1.0f}},
+        // Back
+        {{ h,  h, -h}, { 0.0f,  0.0f, -1.0f}, {0.0f, 0.0f}},
+        {{-h,  h, -h}, { 0.0f,  0.0f, -1.0f}, {1.0f, 0.0f}},
+        {{-h, -h, -h}, { 0.0f,  0.0f, -1.0f}, {1.0f, 1.0f}},
+        {{ h, -h, -h}, { 0.0f,  0.0f, -1.0f}, {0.0f, 1.0f}},
+        // Left
+        {{-h,  h, -h}, {-1.0f,  0.0f,  0.0f}, {0.0f, 0.0f}},
+        {{-h,  h,  h}, {-1.0f,  0.0f,  0.0f}, {1.0f, 0.0f}},
+        {{-h, -h,  h}, {-1.0f,  0.0f,  0.0f}, {1.0f, 1.0f}},
+        {{-h, -h, -h}, {-1.0f,  0.0f,  0.0f}, {0.0f, 1.0f}},
+        // Right
+        {{ h,  h,  h}, { 1.0f,  0.0f,  0.0f}, {0.0f, 0.0f}},
+        {{ h,  h, -h}, { 1.0f,  0.0f,  0.0f}, {1.0f, 0.0f}},
+        {{ h, -h, -h}, { 1.0f,  0.0f,  0.0f}, {1.0f, 1.0f}},
+        {{ h, -h,  h}, { 1.0f,  0.0f,  0.0f}, {0.0f, 1.0f}},
+        // Top
+        {{-h,  h, -h}, { 0.0f,  1.0f,  0.0f}, {0.0f, 0.0f}},
+        {{ h,  h, -h}, { 0.0f,  1.0f,  0.0f}, {1.0f, 0.0f}},
+        {{ h,  h,  h}, { 0.0f,  1.0f,  0.0f}, {1.0f, 1.0f}},
+        {{-h,  h,  h}, { 0.0f,  1.0f,  0.0f}, {0.0f, 1.0f}},
+        // Bottom
+        {{-h, -h,  h}, { 0.0f, -1.0f,  0.0f}, {0.0f, 0.0f}},
+        {{ h, -h,  h}, { 0.0f, -1.0f,  0.0f}, {1.0f, 0.0f}},
+        {{ h, -h, -h}, { 0.0f, -1.0f,  0.0f}, {1.0f, 1.0f}},
+        {{-h, -h, -h}, { 0.0f, -1.0f,  0.0f}, {0.0f, 1.0f}},
+    };
+
+    std::vector<uint32_t> indices = {
+        0,  1,  2,  2,  3,  0,  // Front
+        4,  5,  6,  6,  7,  4,  // Back
+        8,  9, 10, 10, 11,  8,  // Left
+        12, 13, 14, 14, 15, 12, // Right
+        16, 17, 18, 18, 19, 16, // Top
+        20, 21, 22, 22, 23, 20  // Bottom
+    };
+
     Mesh mesh;
     mesh.vertex_buffer = new veekay::graphics::Buffer(vertices.size() * sizeof(Vertex), vertices.data(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
     mesh.index_buffer = new veekay::graphics::Buffer(indices.size() * sizeof(uint32_t), indices.data(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
@@ -273,9 +316,7 @@ veekay::mat4 Transform::matrix() const {
     
     veekay::mat4 t = veekay::mat4::translation(position);
     
-    // ИСПРАВЛЕНИЕ: Сначала Scale, потом Rotate, потом Translate (умножение справа налево)
-    // Было: return s * (rot_x * (rot_y * (rot_z * t)));
-    // Стало:
+    // ИСПРАВЛЕНИЕ: Сначала Scale, потом Rotate, потом Translate
     return t * (rot_z * (rot_y * (rot_x * s)));
 }
 
@@ -379,7 +420,7 @@ veekay::mat4 calculateLightSpaceMatrix(const veekay::vec3& light_position) {
     
     veekay::vec3 eye = light_position;
     veekay::vec3 center = {0.0f, 0.0f, 0.0f};
-    veekay::vec3 up = {0.0f, 0.0f, 1.0f}; // Y-up world
+    veekay::vec3 up = {0.0f, 0.0f, 1.0f};
 
     veekay::mat4 view = veekay::mat4::lookAt(eye, center, up);
     
@@ -691,6 +732,10 @@ void initialize(VkCommandBuffer cmd) {
         cone_texture = loadTexture(cmd, "./assets/textures/pyramid.png");
         if (!cone_texture) cone_texture = missing_texture;
         cone_sampler = createSampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+
+        cube_texture = loadTexture(cmd, "./assets/textures/jersi.png");
+        if (!cube_texture) cube_texture = missing_texture;
+        cube_sampler = createSampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     }
 
     // --- MESH GENERATION ---
@@ -726,13 +771,15 @@ void initialize(VkCommandBuffer cmd) {
 
     {
         // CONE MESH
-        cone_mesh = createConeMesh(64, 1.0f, 2.0f); // 64 сегмента, радиус 1, высота 2
+        cone_mesh = createConeMesh(64, 1.0f, 2.0f);
+        // CUBE MESH
+        cube_mesh = createCubeMesh(1.5f);
     }
 
-    // --- MODEL SETUP (ИЗМЕНЕННАЯ ЧАСТЬ) ---
+    // --- MODEL SETUP ---
     models.clear();
 
-    // 1. Пол (индекс 0)
+    // 1. Пол (Индекс 0)
     models.emplace_back(Model{
         .mesh = plane_mesh,
         .transform = Transform{
@@ -747,23 +794,37 @@ void initialize(VkCommandBuffer cmd) {
         }
     });
 
-    // 2. Создаем 4 ярких конуса (индексы 1-4)
+    // 2. КУБ (Индекс 1)
+    models.emplace_back(Model{
+        .mesh = cube_mesh,
+        .transform = Transform{
+            .position = {0.0f, 1.5f, 0.0f}, // Висит в центре
+            .scale = {1.0f, 1.0f, 1.0f},
+            .rotation = {0.0f, 0.0f, 0.0f}
+        },
+        .material = Material{
+            .albedo = veekay::vec3{1.0f, 1.0f, 1.0f},
+            .specular = veekay::vec3{1.0f, 1.0f, 1.0f},
+            .shininess = 64.0f,
+            .texture = cube_texture,
+            .sampler = cube_sampler,
+        }
+    });
+
+    // 3. Конусы (Индексы 2, 3, 4, 5)
     for (int i = 0; i < 4; ++i) {
-        // Генерируем немного разные оси вращения для каждого
         float axis_x = 0.5f + (i % 2) * 0.5f; 
         float axis_z = 0.2f + (i % 3) * 0.3f;
-
         models.emplace_back(Model{
             .mesh = cone_mesh,
             .transform = Transform{
-                // Начальная позиция не важна, она перезапишется в update
                 .position = {0.0f, 0.0f, 0.0f}, 
                 .scale = {1.5f, 1.5f, 1.5f},
                 .rotation = {0.0f, 0.0f, 0.0f}
             },
             .material = Material{
-                .albedo = veekay::vec3{1.2f, 1.2f, 1.2f}, // Яркий белый (>1.0 для насыщенности)
-                .specular = veekay::vec3{1.0f, 1.0f, 1.0f}, // Максимальный блик
+                .albedo = veekay::vec3{1.2f, 1.2f, 1.2f},
+                .specular = veekay::vec3{1.0f, 1.0f, 1.0f},
                 .shininess = 32.0f,
                 .texture = cone_texture,
                 .sampler = cone_sampler,
@@ -1266,6 +1327,7 @@ void initialize(VkCommandBuffer cmd) {
                                write_infos, 0, nullptr);
     }
 }
+
 void shutdown() {
     VkDevice& device = veekay::app.vk_device;
 
@@ -1313,12 +1375,18 @@ void shutdown() {
     if (cone_texture && cone_texture != missing_texture) {
         delete cone_texture;
     }
+    if (cube_texture && cube_texture != missing_texture) {
+        delete cube_texture;
+    }
 
     if (floor_sampler && floor_sampler != missing_texture_sampler) {
         vkDestroySampler(device, floor_sampler, nullptr);
     }
     if (cone_sampler && cone_sampler != missing_texture_sampler) {
         vkDestroySampler(device, cone_sampler, nullptr);
+    }
+    if (cube_sampler && cube_sampler != missing_texture_sampler) {
+        vkDestroySampler(device, cube_sampler, nullptr);
     }
     
     if (missing_texture_sampler) {
@@ -1330,6 +1398,9 @@ void shutdown() {
 
     delete cone_mesh.index_buffer;
     delete cone_mesh.vertex_buffer;
+
+    delete cube_mesh.index_buffer;
+    delete cube_mesh.vertex_buffer;
 
     delete plane_mesh.index_buffer;
     delete plane_mesh.vertex_buffer;
@@ -1345,7 +1416,6 @@ void shutdown() {
     vkDestroyShaderModule(device, fragment_shader_module, nullptr);
     vkDestroyShaderModule(device, vertex_shader_module, nullptr);
 }
-
 
 void update(double time) {
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
@@ -1383,33 +1453,39 @@ void update(double time) {
         if (keyboard::isKeyDown(keyboard::Key::z)) camera.position -= up * 0.1f;
     }
 
-    // --- ЛОГИКА ДЛЯ 4 КОНУСОВ ---
-    // Начинаем с 1, так как 0 - это пол
-    for (size_t i = 1; i < models.size(); ++i) {
+    // --- ЛОГИКА ДЛЯ КУБА (models[1]) ---
+    if (models.size() > 1) {
+        Model& cube = models[1];
+        // Куб медленно вращается в центре
+        cube.transform.rotation.y += 20.0f * 0.016f;
+        cube.transform.rotation.x += 10.0f * 0.016f;
+        // Пульсация
+        float t = float(time);
+        float scale = 1.0f + sinf(t * 3.0f) * 0.1f;
+        cube.transform.scale = {scale, scale, scale};
+    }
+
+    // --- ЛОГИКА ДЛЯ КОНУСОВ (Начинаем с 2, так как 0 - пол, 1 - куб) ---
+    for (size_t i = 2; i < models.size(); ++i) {
         Model& cone = models[i];
         
-        // Уникальный сдвиг для каждого конуса на основе индекса
         float offset = (float)i * 1.5f; 
         
-        // Вращение (разная скорость для каждого)
+        // Вращение
         cone.transform.rotation.x += (50.0f + offset * 5.0f) * 0.016f;
         cone.transform.rotation.y += (30.0f - offset * 2.0f) * 0.016f;
         
         float t = float(time);
-        
-        // Разная скорость полета для каждого конуса
         float speed = 0.8f + (i % 2) * 0.4f;
         float t_scaled = t * speed + offset;
 
-        // Странная траектория (Лиссажу)
-        // Используем разные множители для радиуса, чтобы они не летали "гуськом"
-        float radius_x = 3.0f + (i % 2); 
-        float radius_z = 3.0f + ((i + 1) % 2);
+        // Летаем вокруг куба (увеличили радиус до 4.0)
+        float radius_x = 4.0f + (i % 2); 
+        float radius_z = 4.0f + ((i + 1) % 2);
 
         cone.transform.position.x = sinf(t_scaled) * radius_x;
         cone.transform.position.z = sinf(t_scaled * 0.5f) * radius_z; 
         
-        // Высота (держим базу 3.0f, чтобы не проваливались под пол)
         cone.transform.position.y = 3.0f + cosf(t_scaled * 2.0f) * 1.5f; 
     }
     
@@ -1449,7 +1525,6 @@ void update(double time) {
         *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
     }
 }
-
 
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
     static bool first_frame = true;
