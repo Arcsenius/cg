@@ -172,30 +172,42 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
     vertices.reserve(1 + segments + 1 + segments);
     indices.reserve(segments * 6);
     
-    // Сдвиг по Y, чтобы центр конуса был в (0,0,0) локально
+    // Сдвиг по Y для центрирования
     float y_offset = -height / 2.0f;
+    
+    // Рассчитываем угол наклона нормали
+    // Нормаль боковой поверхности конуса имеет постоянный наклон
+    float slope = radius / height;
 
-    // Вершина конуса
-    vertices.push_back(Vertex{{0.0f, height + y_offset, 0.0f},{0.0f, 1.0f, 0.0f},{0.5f, 0.0f}});
+    // --- Вершина конуса ---
+    // У вершины нормаль должна смотреть вверх, иначе верхушка будет черной
+    vertices.push_back(Vertex{{0.0f, height + y_offset, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.0f}});
     
     const float circumference = 2.0f * float(M_PI);
     
-    // Боковая поверхность
+    // --- Боковая поверхность ---
     for (uint32_t i = 0; i < segments; ++i) {
         float angle = circumference * (float(i) / float(segments));
-        float x = radius * std::cos(angle);
-        float z = radius * std::sin(angle);
-        veekay::vec3 normal = veekay::vec3::normalized({x, radius / height, z});
-        // Применяем y_offset
+        
+        // Координаты на единичной окружности (для нормали)
+        float nx = std::cos(angle);
+        float nz = std::sin(angle);
+        
+        // Координаты позиции (масштабируем на радиус)
+        float x = radius * nx;
+        float z = radius * nz;
+        
+        // ВАЖНО: Нормаль строится от единичного вектора, а не от позиции x/z
+        // Компонент Y (slope) отвечает за наклон грани
+        veekay::vec3 normal = veekay::vec3::normalized({nx, slope, nz});
+        
         vertices.push_back(Vertex{{x, 0.0f + y_offset, z}, normal, {float(i) / float(segments), 1.0f}});
     }
     
+    // --- Основание ---
     const uint32_t base_center_index = static_cast<uint32_t>(vertices.size());
-    
-    // Центр основания
     vertices.push_back(Vertex{{0.0f, 0.0f + y_offset, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
     
-    // Вершины основания
     for (uint32_t i = 0; i < segments; ++i) {
         float angle = circumference * (float(i) / float(segments));
         float x = radius * std::cos(angle);
@@ -203,6 +215,7 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
         vertices.push_back(Vertex{{x, 0.0f + y_offset, z}, {0.0f, -1.0f, 0.0f}, {0.5f + (x / (2.0f * radius)), 0.5f + (z / (2.0f * radius))}});
     }
     
+    // Индексы
     const uint32_t tip_index = 0;
     const uint32_t side_start = 1;
     const uint32_t base_start = base_center_index + 1;
@@ -736,7 +749,7 @@ void initialize(VkCommandBuffer cmd) {
     });
 
     // 2. Конус (вместо пирамиды)
-    models.emplace_back(Model{
+models.emplace_back(Model{
         .mesh = cone_mesh,
         .transform = Transform{
             .position = {0.0f, 0.0f, 0.0f},
@@ -744,17 +757,9 @@ void initialize(VkCommandBuffer cmd) {
             .rotation = {0.0f, 0.0f, 0.0f}
         },
         .material = Material{
-            // БЫЛО: Оранжевый, который затемнял текстуру
-            // СТАЛО: Чистый белый, чтобы текстура была максимально яркой
-            .albedo = veekay::vec3{1.0f, 1.0f, 1.0f}, 
-            
-            // БЫЛО: {0.3f, 0.3f, 0.2f} (Тусклый блик)
-            // СТАЛО: Яркий белый блик
+            .albedo = veekay::vec3{1.2f, 1.2f, 1.2f}, // Даже тут можно поставить > 1.0 для усиления цвета текстуры
             .specular = veekay::vec3{1.0f, 1.0f, 1.0f},
-            
-            // Сделаем блик чуть более "размытым" и широким (меньше число = шире блик)
-            .shininess = 32.0f, 
-            
+            .shininess = 32.0f,
             .texture = cone_texture,
             .sampler = cone_sampler,
         },
@@ -1413,20 +1418,22 @@ void update(double time) {
     veekay::vec3 light_pos = {6.0f, 10.0f, 6.0f};
     veekay::mat4 light_space_matrix = calculateLightSpaceMatrix(light_pos);
 
-    SceneUniforms scene_uniforms{
+   SceneUniforms scene_uniforms{
         .view_projection = camera.view_projection(aspect_ratio),
         .view_position = camera.position,
         .directional_light = DirectionalLight{
-            // БЫЛО: {-0.6f, 1.0f, -0.6f} (Свет почти сверху)
-            // СТАЛО: Свет падает под углом 45 градусов, освещая бока конуса лучше
-            .direction = {-1.0f, 1.0f, -1.0f}, 
+            // Направление "в лицо" конусу и немного сверху
+            // (Вектор НА свет, если шейдер стандартный)
+            .direction = {0.2f, 1.0f, 0.5f}, 
             
-            // БЫЛО: {0.2f, ...}
-            // СТАЛО: Чуть светлее тени
-            .ambient = {0.3f, 0.3f, 0.3f},
+            // Значительно поднимаем Ambient (фоновый свет), чтобы тени не были черными
+            // Это сделает конус ярким даже с теневой стороны
+            .ambient = {0.6f, 0.6f, 0.6f}, 
             
-            // Диффузный свет на максимум
-            .diffuse = {1.2f, 1.2f, 1.2f}, // Можно даже > 1.0 для яркости
+            // Увеличиваем яркость основного света в 2 раза выше нормы
+            .diffuse = {1.0f, 1.0f, 1.0f}, 
+            
+            // Яркий белый блик
             .specular = {1.0f, 1.0f, 1.0f},
         },
         .light_space_matrix = light_space_matrix,
