@@ -471,7 +471,7 @@ void initialize(VkCommandBuffer cmd) {
         VkPipelineRasterizationStateCreateInfo raster_info{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
             .polygonMode = VK_POLYGON_MODE_FILL,
-            .cullMode = VK_CULL_MODE_NONE, // В конусе индексы могут быть перепутаны, отключаем отсечение для надежности
+            .cullMode = VK_CULL_MODE_NONE, 
             .frontFace = VK_FRONT_FACE_CLOCKWISE,
             .lineWidth = 1.0f,
         };
@@ -688,7 +688,6 @@ void initialize(VkCommandBuffer cmd) {
         if (!floor_texture) floor_texture = missing_texture;
         floor_sampler = createSampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
 
-        // Используем текстуру пирамиды для конуса, чтобы он выглядел интересно
         cone_texture = loadTexture(cmd, "./assets/textures/pyramid.png");
         if (!cone_texture) cone_texture = missing_texture;
         cone_sampler = createSampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
@@ -730,14 +729,14 @@ void initialize(VkCommandBuffer cmd) {
         cone_mesh = createConeMesh(64, 1.0f, 2.0f); // 64 сегмента, радиус 1, высота 2
     }
 
-    // --- MODEL SETUP ---
+    // --- MODEL SETUP (ИЗМЕНЕННАЯ ЧАСТЬ) ---
     models.clear();
 
-    // 1. Пол
+    // 1. Пол (индекс 0)
     models.emplace_back(Model{
         .mesh = plane_mesh,
         .transform = Transform{
-            .position = {0.0f, -2.0f, 0.0f} // Опустим пол
+            .position = {0.0f, -2.0f, 0.0f} // Пол опущен
         },
         .material = Material{
             .albedo = veekay::vec3{1.0f, 1.0f, 1.0f},
@@ -748,23 +747,30 @@ void initialize(VkCommandBuffer cmd) {
         }
     });
 
-    // 2. Конус (вместо пирамиды)
-models.emplace_back(Model{
-        .mesh = cone_mesh,
-        .transform = Transform{
-            .position = {0.0f, 0.0f, 0.0f},
-            .scale = {1.5f, 1.5f, 1.5f},
-            .rotation = {0.0f, 0.0f, 0.0f}
-        },
-        .material = Material{
-            .albedo = veekay::vec3{1.2f, 1.2f, 1.2f}, // Даже тут можно поставить > 1.0 для усиления цвета текстуры
-            .specular = veekay::vec3{1.0f, 1.0f, 1.0f},
-            .shininess = 32.0f,
-            .texture = cone_texture,
-            .sampler = cone_sampler,
-        },
-        .rotation_axis = {0.5f, 1.0f, 0.2f}
-    });
+    // 2. Создаем 4 ярких конуса (индексы 1-4)
+    for (int i = 0; i < 4; ++i) {
+        // Генерируем немного разные оси вращения для каждого
+        float axis_x = 0.5f + (i % 2) * 0.5f; 
+        float axis_z = 0.2f + (i % 3) * 0.3f;
+
+        models.emplace_back(Model{
+            .mesh = cone_mesh,
+            .transform = Transform{
+                // Начальная позиция не важна, она перезапишется в update
+                .position = {0.0f, 0.0f, 0.0f}, 
+                .scale = {1.5f, 1.5f, 1.5f},
+                .rotation = {0.0f, 0.0f, 0.0f}
+            },
+            .material = Material{
+                .albedo = veekay::vec3{1.2f, 1.2f, 1.2f}, // Яркий белый (>1.0 для насыщенности)
+                .specular = veekay::vec3{1.0f, 1.0f, 1.0f}, // Максимальный блик
+                .shininess = 32.0f,
+                .texture = cone_texture,
+                .sampler = cone_sampler,
+            },
+            .rotation_axis = {axis_x, 1.0f, axis_z}
+        });
+    }
 
     // --- SHADOW SETUP ---
     {
@@ -1260,7 +1266,6 @@ models.emplace_back(Model{
                                write_infos, 0, nullptr);
     }
 }
-
 void shutdown() {
     VkDevice& device = veekay::app.vk_device;
 
@@ -1341,6 +1346,7 @@ void shutdown() {
     vkDestroyShaderModule(device, vertex_shader_module, nullptr);
 }
 
+
 void update(double time) {
     ImGui::SetNextWindowPos(ImVec2(20, 20), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(380, 520), ImGuiCond_FirstUseEver);
@@ -1348,7 +1354,7 @@ void update(double time) {
     
     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "=== RENDER ENGINE v2.0 ===");
     ImGui::Text("Objects rendered: %zu", models.size());
-    ImGui::Text("Cone Position: Strange Trajectory");
+    ImGui::Text("Trajectory: Chaos Mode");
     ImGui::Separator();
     
     ImGui::End();
@@ -1358,82 +1364,66 @@ void update(double time) {
 
         if (mouse::isButtonDown(mouse::Button::left)) {
             auto move_delta = mouse::cursorDelta();
-
             camera.rotation.y -= move_delta.x * 0.1f;
             camera.rotation.x += move_delta.y * 0.1f;
-
             if (camera.rotation.x > 89.0f) camera.rotation.x = 89.0f;
             if (camera.rotation.x < -89.0f) camera.rotation.x = -89.0f;
         }
 
         auto view = camera.view();
-
         veekay::vec3 right = {view.elements[0][0], view.elements[1][0], view.elements[2][0]};
         veekay::vec3 up = {view.elements[0][1], view.elements[1][1], view.elements[2][1]};
         veekay::vec3 front = {view.elements[0][2], view.elements[1][2], view.elements[2][2]};
 
-        if (keyboard::isKeyDown(keyboard::Key::w))
-            camera.position += front * 0.1f;
-
-        if (keyboard::isKeyDown(keyboard::Key::s))
-            camera.position -= front * 0.1f;
-
-        if (keyboard::isKeyDown(keyboard::Key::d))
-            camera.position += right * 0.1f;
-
-        if (keyboard::isKeyDown(keyboard::Key::a))
-            camera.position -= right * 0.1f;
-
-        if (keyboard::isKeyDown(keyboard::Key::q))
-            camera.position += up * 0.1f;
-
-        if (keyboard::isKeyDown(keyboard::Key::z))
-            camera.position -= up * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::w)) camera.position += front * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::s)) camera.position -= front * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::d)) camera.position += right * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::a)) camera.position -= right * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::q)) camera.position += up * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::z)) camera.position -= up * 0.1f;
     }
 
-    // --- ЛОГИКА СТРАННОЙ ТРАЕКТОРИИ ---
-    if (models.size() > 1) {
-        Model& cone = models[1];
+    // --- ЛОГИКА ДЛЯ 4 КОНУСОВ ---
+    // Начинаем с 1, так как 0 - это пол
+    for (size_t i = 1; i < models.size(); ++i) {
+        Model& cone = models[i];
         
-        // Вращение
-        cone.transform.rotation.x += 60.0f * 0.016f;
-        cone.transform.rotation.y += 30.0f * 0.016f;
+        // Уникальный сдвиг для каждого конуса на основе индекса
+        float offset = (float)i * 1.5f; 
+        
+        // Вращение (разная скорость для каждого)
+        cone.transform.rotation.x += (50.0f + offset * 5.0f) * 0.016f;
+        cone.transform.rotation.y += (30.0f - offset * 2.0f) * 0.016f;
         
         float t = float(time);
         
-        // Странная траектория (восьмерка)
-        cone.transform.position.x = sinf(t) * 3.0f;
-        cone.transform.position.z = sinf(t * 0.5f) * 3.0f; 
+        // Разная скорость полета для каждого конуса
+        float speed = 0.8f + (i % 2) * 0.4f;
+        float t_scaled = t * speed + offset;
+
+        // Странная траектория (Лиссажу)
+        // Используем разные множители для радиуса, чтобы они не летали "гуськом"
+        float radius_x = 3.0f + (i % 2); 
+        float radius_z = 3.0f + ((i + 1) % 2);
+
+        cone.transform.position.x = sinf(t_scaled) * radius_x;
+        cone.transform.position.z = sinf(t_scaled * 0.5f) * radius_z; 
         
-        // ВАЖНОЕ ИЗМЕНЕНИЕ: 
-        // Пол находится на Y = -2.0.
-        // Высота конуса с учетом масштаба = 3.0.
-        // Чтобы при вращении вершина не цепляла пол, центр должен быть выше.
-        // Поднимаем базу до 3.0f. Теперь диапазон высоты [1.5 ... 4.5].
-        cone.transform.position.y = 3.0f + cosf(t * 2.0f) * 1.5f; 
+        // Высота (держим базу 3.0f, чтобы не проваливались под пол)
+        cone.transform.position.y = 3.0f + cosf(t_scaled * 2.0f) * 1.5f; 
     }
     
     float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
-
     veekay::vec3 light_pos = {6.0f, 10.0f, 6.0f};
     veekay::mat4 light_space_matrix = calculateLightSpaceMatrix(light_pos);
 
-   SceneUniforms scene_uniforms{
+    SceneUniforms scene_uniforms{
         .view_projection = camera.view_projection(aspect_ratio),
         .view_position = camera.position,
         .directional_light = DirectionalLight{
-            // Направление "в лицо" конусу и немного сверху
-            // (Вектор НА свет, если шейдер стандартный)
             .direction = {0.2f, 1.0f, 0.5f}, 
-            
-            // Значительно поднимаем Ambient (фоновый свет), чтобы тени не были черными
-            // Это сделает конус ярким даже с теневой стороны
             .ambient = {0.6f, 0.6f, 0.6f}, 
-            
-            // Увеличиваем яркость основного света в 2 раза выше нормы
-            .diffuse = {1.0f, 1.0f, 1.0f}, 
-            
-            // Яркий белый блик
+            .diffuse = {2.0f, 2.0f, 2.0f}, 
             .specular = {1.0f, 1.0f, 1.0f},
         },
         .light_space_matrix = light_space_matrix,
@@ -1443,7 +1433,6 @@ void update(double time) {
     for (size_t i = 0, n = models.size(); i < n; ++i) {
         const Model& model = models[i];
         ModelUniforms& uniforms = model_uniforms[i];
-
         uniforms.model = model.transform.matrix();
         uniforms.albedo_color = model.material.albedo;
         uniforms.shininess = model.material.shininess;
@@ -1451,15 +1440,11 @@ void update(double time) {
     }
 
     *(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
-
     *(veekay::mat4*)light_space_buffer->mapped_region = light_space_matrix;
 
-    const size_t alignment =
-        veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
-
+    const size_t alignment = veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
     for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
         const ModelUniforms& uniforms = model_uniforms[i];
-
         char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
         *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
     }
