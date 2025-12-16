@@ -172,8 +172,11 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
     vertices.reserve(1 + segments + 1 + segments);
     indices.reserve(segments * 6);
     
+    // Сдвиг по Y, чтобы центр конуса был в (0,0,0) локально
+    float y_offset = -height / 2.0f;
+
     // Вершина конуса
-    vertices.push_back(Vertex{{0.0f, height, 0.0f},{0.0f, 1.0f, 0.0f},{0.5f, 0.0f}});
+    vertices.push_back(Vertex{{0.0f, height + y_offset, 0.0f},{0.0f, 1.0f, 0.0f},{0.5f, 0.0f}});
     
     const float circumference = 2.0f * float(M_PI);
     
@@ -182,52 +185,42 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
         float angle = circumference * (float(i) / float(segments));
         float x = radius * std::cos(angle);
         float z = radius * std::sin(angle);
-        // Нормаль приближенная
         veekay::vec3 normal = veekay::vec3::normalized({x, radius / height, z});
-        vertices.push_back(Vertex{{x, 0.0f, z}, normal, {float(i) / float(segments), 1.0f}});
+        // Применяем y_offset
+        vertices.push_back(Vertex{{x, 0.0f + y_offset, z}, normal, {float(i) / float(segments), 1.0f}});
     }
     
     const uint32_t base_center_index = static_cast<uint32_t>(vertices.size());
     
     // Центр основания
-    vertices.push_back(Vertex{{0.0f, 0.0f, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
+    vertices.push_back(Vertex{{0.0f, 0.0f + y_offset, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
     
     // Вершины основания
     for (uint32_t i = 0; i < segments; ++i) {
         float angle = circumference * (float(i) / float(segments));
         float x = radius * std::cos(angle);
         float z = radius * std::sin(angle);
-        vertices.push_back(Vertex{{x, 0.0f, z}, {0.0f, -1.0f, 0.0f}, {0.5f + (x / (2.0f * radius)), 0.5f + (z / (2.0f * radius))}});
+        vertices.push_back(Vertex{{x, 0.0f + y_offset, z}, {0.0f, -1.0f, 0.0f}, {0.5f + (x / (2.0f * radius)), 0.5f + (z / (2.0f * radius))}});
     }
     
     const uint32_t tip_index = 0;
     const uint32_t side_start = 1;
     const uint32_t base_start = base_center_index + 1;
     
-    // Индексы боковой поверхности
     for (uint32_t i = 0; i < segments; ++i) {
         uint32_t current = side_start + i;
         uint32_t next = side_start + ((i + 1) % segments);
-        // Порядок вершин для cull mode (Clockwise)
-        indices.push_back(tip_index); 
-        indices.push_back(next); 
-        indices.push_back(current);
+        indices.push_back(tip_index); indices.push_back(next); indices.push_back(current);
     }
-    
-    // Индексы основания
     for (uint32_t i = 0; i < segments; ++i) {
         uint32_t current = base_start + i;
         uint32_t next = base_start + ((i + 1) % segments);
-        indices.push_back(base_center_index); 
-        indices.push_back(current);
-        indices.push_back(next); 
+        indices.push_back(base_center_index); indices.push_back(current); indices.push_back(next);
     }
     
     Mesh mesh;
-    mesh.vertex_buffer = new veekay::graphics::Buffer(
-        vertices.size() * sizeof(Vertex), vertices.data(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
-    mesh.index_buffer = new veekay::graphics::Buffer(
-        indices.size() * sizeof(uint32_t), indices.data(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+    mesh.vertex_buffer = new veekay::graphics::Buffer(vertices.size() * sizeof(Vertex), vertices.data(), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+    mesh.index_buffer = new veekay::graphics::Buffer(indices.size() * sizeof(uint32_t), indices.data(), VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
     mesh.indices = static_cast<uint32_t>(indices.size());
     return mesh;
 }
@@ -267,7 +260,10 @@ veekay::mat4 Transform::matrix() const {
     
     veekay::mat4 t = veekay::mat4::translation(position);
     
-    return s * (rot_x * (rot_y * (rot_z * t))); // Порядок умножения важен
+    // ИСПРАВЛЕНИЕ: Сначала Scale, потом Rotate, потом Translate (умножение справа налево)
+    // Было: return s * (rot_x * (rot_y * (rot_z * t)));
+    // Стало:
+    return t * (rot_z * (rot_y * (rot_x * s)));
 }
 
 veekay::mat4 Camera::view() const {
@@ -1392,13 +1388,16 @@ void update(double time) {
         
         float t = float(time);
         
-        // Движение по фигуре Лиссажу (восьмерка)
+        // Странная траектория (восьмерка)
         cone.transform.position.x = sinf(t) * 3.0f;
         cone.transform.position.z = sinf(t * 0.5f) * 3.0f; 
         
-        // ИЗМЕНЕНИЕ ЗДЕСЬ: Подняли базовую высоту с -1.0f до 1.0f
-        // Теперь конус колеблется между высотой -0.5 и 2.5, не касаясь пола (-2.0)
-        cone.transform.position.y = 1.0f + cosf(t * 2.0f) * 1.5f; 
+        // ВАЖНОЕ ИЗМЕНЕНИЕ: 
+        // Пол находится на Y = -2.0.
+        // Высота конуса с учетом масштаба = 3.0.
+        // Чтобы при вращении вершина не цепляла пол, центр должен быть выше.
+        // Поднимаем базу до 3.0f. Теперь диапазон высоты [1.5 ... 4.5].
+        cone.transform.position.y = 3.0f + cosf(t * 2.0f) * 1.5f; 
     }
     
     float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
@@ -1443,6 +1442,8 @@ void update(double time) {
         *reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
     }
 }
+
+
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
     static bool first_frame = true;
     
