@@ -85,7 +85,6 @@ struct Model {
     Mesh mesh;
     Transform transform;
     Material material;
-    // Дополнительные параметры для вращения
     veekay::vec3 rotation_axis = {0.0f, 1.0f, 0.0f}; 
 };
 
@@ -106,6 +105,7 @@ struct Camera {
 };
 
 inline namespace {
+    // Так мы будем видеть "пол" (который на Y=-2.0) и объекты на нем
     Camera camera{
         .position = {0.0f, -4.0f, -9.0f},
         .rotation = {-30.0f, 0.0f, 0.0f}
@@ -129,7 +129,7 @@ inline namespace {
 
     Mesh plane_mesh;
     Mesh cone_mesh;
-    Mesh cube_mesh; // Меш куба
+    Mesh cube_mesh;
 
     veekay::graphics::Texture* missing_texture;
     VkSampler missing_texture_sampler;
@@ -140,7 +140,7 @@ inline namespace {
     veekay::graphics::Texture* cone_texture;
     VkSampler cone_sampler;
 
-    veekay::graphics::Texture* cube_texture; // Текстура куба
+    veekay::graphics::Texture* cube_texture;
     VkSampler cube_sampler;
 
     constexpr uint32_t shadow_map_size = 2048;
@@ -168,7 +168,6 @@ inline namespace {
     constexpr uint32_t max_descriptor_sets = 32;
 }
 
-// --- ФУНКЦИЯ СОЗДАНИЯ КОНУСА (Исправленная: центр в середине) ---
 Mesh createConeMesh(uint32_t segments, float radius, float height) {
     segments = std::max(segments, 3u);
     std::vector<Vertex> vertices;
@@ -179,12 +178,10 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
     float y_offset = -height / 2.0f;
     float slope = radius / height;
 
-    // Вершина
     vertices.push_back(Vertex{{0.0f, height + y_offset, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.0f}});
     
     const float circumference = 2.0f * float(M_PI);
     
-    // Бока
     for (uint32_t i = 0; i < segments; ++i) {
         float angle = circumference * (float(i) / float(segments));
         float nx = std::cos(angle);
@@ -195,7 +192,6 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
         vertices.push_back(Vertex{{x, 0.0f + y_offset, z}, normal, {float(i) / float(segments), 1.0f}});
     }
     
-    // Основание
     const uint32_t base_center_index = static_cast<uint32_t>(vertices.size());
     vertices.push_back(Vertex{{0.0f, 0.0f + y_offset, 0.0f}, {0.0f, -1.0f, 0.0f}, {0.5f, 0.5f}});
     
@@ -228,37 +224,30 @@ Mesh createConeMesh(uint32_t segments, float radius, float height) {
     return mesh;
 }
 
-// --- ФУНКЦИЯ СОЗДАНИЯ КУБА ---
 Mesh createCubeMesh(float size) {
     float h = size * 0.5f;
 
     std::vector<Vertex> vertices = {
-        // Front
         {{-h,  h,  h}, { 0.0f,  0.0f,  1.0f}, {0.0f, 0.0f}},
         {{ h,  h,  h}, { 0.0f,  0.0f,  1.0f}, {1.0f, 0.0f}},
         {{ h, -h,  h}, { 0.0f,  0.0f,  1.0f}, {1.0f, 1.0f}},
         {{-h, -h,  h}, { 0.0f,  0.0f,  1.0f}, {0.0f, 1.0f}},
-        // Back
         {{ h,  h, -h}, { 0.0f,  0.0f, -1.0f}, {0.0f, 0.0f}},
         {{-h,  h, -h}, { 0.0f,  0.0f, -1.0f}, {1.0f, 0.0f}},
         {{-h, -h, -h}, { 0.0f,  0.0f, -1.0f}, {1.0f, 1.0f}},
         {{ h, -h, -h}, { 0.0f,  0.0f, -1.0f}, {0.0f, 1.0f}},
-        // Left
         {{-h,  h, -h}, {-1.0f,  0.0f,  0.0f}, {0.0f, 0.0f}},
         {{-h,  h,  h}, {-1.0f,  0.0f,  0.0f}, {1.0f, 0.0f}},
         {{-h, -h,  h}, {-1.0f,  0.0f,  0.0f}, {1.0f, 1.0f}},
         {{-h, -h, -h}, {-1.0f,  0.0f,  0.0f}, {0.0f, 1.0f}},
-        // Right
         {{ h,  h,  h}, { 1.0f,  0.0f,  0.0f}, {0.0f, 0.0f}},
         {{ h,  h, -h}, { 1.0f,  0.0f,  0.0f}, {1.0f, 0.0f}},
         {{ h, -h, -h}, { 1.0f,  0.0f,  0.0f}, {1.0f, 1.0f}},
         {{ h, -h,  h}, { 1.0f,  0.0f,  0.0f}, {0.0f, 1.0f}},
-        // Top
         {{-h,  h, -h}, { 0.0f,  1.0f,  0.0f}, {0.0f, 0.0f}},
         {{ h,  h, -h}, { 0.0f,  1.0f,  0.0f}, {1.0f, 0.0f}},
         {{ h,  h,  h}, { 0.0f,  1.0f,  0.0f}, {1.0f, 1.0f}},
         {{-h,  h,  h}, { 0.0f,  1.0f,  0.0f}, {0.0f, 1.0f}},
-        // Bottom
         {{-h, -h,  h}, { 0.0f, -1.0f,  0.0f}, {0.0f, 0.0f}},
         {{ h, -h,  h}, { 0.0f, -1.0f,  0.0f}, {1.0f, 0.0f}},
         {{ h, -h, -h}, { 0.0f, -1.0f,  0.0f}, {1.0f, 1.0f}},
@@ -266,12 +255,12 @@ Mesh createCubeMesh(float size) {
     };
 
     std::vector<uint32_t> indices = {
-        0,  1,  2,  2,  3,  0,  // Front
-        4,  5,  6,  6,  7,  4,  // Back
-        8,  9, 10, 10, 11,  8,  // Left
-        12, 13, 14, 14, 15, 12, // Right
-        16, 17, 18, 18, 19, 16, // Top
-        20, 21, 22, 22, 23, 20  // Bottom
+        0,  1,  2,  2,  3,  0,
+        4,  5,  6,  6,  7,  4,
+        8,  9, 10, 10, 11,  8,
+        12, 13, 14, 14, 15, 12,
+        16, 17, 18, 18, 19, 16,
+        20, 21, 22, 22, 23, 20 
     };
 
     Mesh mesh;
@@ -280,7 +269,6 @@ Mesh createCubeMesh(float size) {
     mesh.indices = static_cast<uint32_t>(indices.size());
     return mesh;
 }
-// ----------------------------------------------------
 
 float toRadians(float degrees) {
     return degrees * float(M_PI) / 180.0f;
@@ -315,9 +303,9 @@ veekay::mat4 Transform::matrix() const {
     rot_z.elements[1][1] = cosf(rz);
     
     veekay::mat4 t = veekay::mat4::translation(position);
-    
-    // ИСПРАВЛЕНИЕ: Сначала Scale, потом Rotate, потом Translate
-    return t * (rot_z * (rot_y * (rot_x * s)));
+    // Если veekay использует row-major, то правильный порядок умножения: S * R * T.
+    // Давайте вернем старый добрый порядок, который работал в самом начале.
+    return s * (rot_x * (rot_y * (rot_z * t)));
 }
 
 veekay::mat4 Camera::view() const {
@@ -333,6 +321,7 @@ veekay::mat4 Camera::view() const {
 
 veekay::mat4 Camera::view_projection(float aspect_ratio) const {
     auto projection = veekay::mat4::projection(fov, aspect_ratio, near_plane, far_plane);
+    projection.elements[1][1] *= -1.0f;
     return view() * projection;
 }
 
@@ -411,16 +400,16 @@ VkSampler createSampler(VkFilter filter = VK_FILTER_LINEAR,
 }
 
 veekay::mat4 calculateLightSpaceMatrix(const veekay::vec3& light_position) {
-    float left = -15.0f;
-    float right = 15.0f;
-    float bottom = -15.0f;
-    float top = 15.0f;
+    float left = -20.0f;
+    float right = 20.0f;
+    float bottom = -20.0f;
+    float top = 20.0f;
     float near_plane = 0.1f;
-    float far_plane = 30.0f;
+    float far_plane = 50.0f;
     
     veekay::vec3 eye = light_position;
     veekay::vec3 center = {0.0f, 0.0f, 0.0f};
-    veekay::vec3 up = {0.0f, 0.0f, 1.0f};
+    veekay::vec3 up = {0.0f, 1.0f, 0.0f};
 
     veekay::mat4 view = veekay::mat4::lookAt(eye, center, up);
     
@@ -431,7 +420,7 @@ veekay::mat4 calculateLightSpaceMatrix(const veekay::vec3& light_position) {
     proj.elements[3][0] = -(right + left) / (right - left);
     proj.elements[3][1] = -(top + bottom) / (top - bottom);
     proj.elements[3][2] = -near_plane / (far_plane - near_plane);
-    
+    // ИСПРАВЛЕНИЕ 4: Порядок умножения view * proj
     return view * proj;
 }
 
@@ -512,7 +501,7 @@ void initialize(VkCommandBuffer cmd) {
         VkPipelineRasterizationStateCreateInfo raster_info{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
             .polygonMode = VK_POLYGON_MODE_FILL,
-            .cullMode = VK_CULL_MODE_NONE, 
+            .cullMode = VK_CULL_MODE_NONE,
             .frontFace = VK_FRONT_FACE_CLOCKWISE,
             .lineWidth = 1.0f,
         };
@@ -737,10 +726,7 @@ void initialize(VkCommandBuffer cmd) {
         if (!cube_texture) cube_texture = missing_texture;
         cube_sampler = createSampler(VK_FILTER_LINEAR, VK_SAMPLER_ADDRESS_MODE_REPEAT);
     }
-
-    // --- MESH GENERATION ---
     {
-        // PLANE MESH (Floor)
         std::vector<Vertex> vertices = {
             {{-15.0f, 0.0f, -15.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
             {{15.0f, 0.0f, -15.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
@@ -770,35 +756,27 @@ void initialize(VkCommandBuffer cmd) {
     }
 
     {
-        // CONE MESH
         cone_mesh = createConeMesh(64, 1.0f, 2.0f);
-        // CUBE MESH
         cube_mesh = createCubeMesh(1.5f);
     }
-
-    // --- MODEL SETUP ---
     models.clear();
-
-    // 1. Пол (Индекс 0)
     models.emplace_back(Model{
         .mesh = plane_mesh,
         .transform = Transform{
-            .position = {0.0f, -2.0f, 0.0f} // Пол опущен
+            .position = {0.0f, -2.0f, 0.0f} 
         },
         .material = Material{
-            .albedo = veekay::vec3{1.0f, 1.0f, 1.0f},
-            .specular = veekay::vec3{0.15f, 0.15f, 0.15f},
-            .shininess = 8.0f,
+            .albedo = veekay::vec3{0.2f, 0.2f, 0.2f}, 
+            .specular = veekay::vec3{0.05f, 0.05f, 0.05f},
+            .shininess = 4.0f,
             .texture = floor_texture,
             .sampler = floor_sampler,
         }
     });
-
-    // 2. КУБ (Индекс 1)
     models.emplace_back(Model{
         .mesh = cube_mesh,
         .transform = Transform{
-            .position = {0.0f, 1.5f, 0.0f}, // Висит в центре
+            .position = {0.0f, -1.25f, 0.0f}, 
             .scale = {1.0f, 1.0f, 1.0f},
             .rotation = {0.0f, 0.0f, 0.0f}
         },
@@ -810,8 +788,6 @@ void initialize(VkCommandBuffer cmd) {
             .sampler = cube_sampler,
         }
     });
-
-    // 3. Конусы (Индексы 2, 3, 4, 5)
     for (int i = 0; i < 4; ++i) {
         float axis_x = 0.5f + (i % 2) * 0.5f; 
         float axis_z = 0.2f + (i % 3) * 0.3f;
@@ -832,8 +808,6 @@ void initialize(VkCommandBuffer cmd) {
             .rotation_axis = {axis_x, 1.0f, axis_z}
         });
     }
-
-    // --- SHADOW SETUP ---
     {
         VkImageCreateInfo image_info{
             .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
@@ -1105,11 +1079,11 @@ void initialize(VkCommandBuffer cmd) {
 
         VkPipelineDepthStencilStateCreateInfo shadow_depth{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-            .depthTestEnable = VK_TRUE,
-            .depthWriteEnable = VK_TRUE,
+            .depthTestEnable = true,
+            .depthWriteEnable = true,
             .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
-            .depthBoundsTestEnable = VK_FALSE,
-            .stencilTestEnable = VK_FALSE,
+            .depthBoundsTestEnable = false,
+            .stencilTestEnable = false,
         };
 
         VkDescriptorSetLayoutBinding shadow_bindings[] = {
@@ -1449,44 +1423,25 @@ void update(double time) {
         if (keyboard::isKeyDown(keyboard::Key::s)) camera.position -= front * 0.1f;
         if (keyboard::isKeyDown(keyboard::Key::d)) camera.position += right * 0.1f;
         if (keyboard::isKeyDown(keyboard::Key::a)) camera.position -= right * 0.1f;
-        if (keyboard::isKeyDown(keyboard::Key::q)) camera.position += up * 0.1f;
-        if (keyboard::isKeyDown(keyboard::Key::z)) camera.position -= up * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::e)) camera.position += up * 0.1f;
+        if (keyboard::isKeyDown(keyboard::Key::q)) camera.position -= up * 0.1f;
     }
-
-    // --- ЛОГИКА ДЛЯ КУБА (models[1]) ---
-    if (models.size() > 1) {
-        Model& cube = models[1];
-        // Куб медленно вращается в центре
-        cube.transform.rotation.y += 20.0f * 0.016f;
-        cube.transform.rotation.x += 10.0f * 0.016f;
-        // Пульсация
-        float t = float(time);
-        float scale = 1.0f + sinf(t * 3.0f) * 0.1f;
-        cube.transform.scale = {scale, scale, scale};
-    }
-
-    // --- ЛОГИКА ДЛЯ КОНУСОВ (Начинаем с 2, так как 0 - пол, 1 - куб) ---
     for (size_t i = 2; i < models.size(); ++i) {
         Model& cone = models[i];
         
         float offset = (float)i * 1.5f; 
-        
-        // Вращение
         cone.transform.rotation.x += (50.0f + offset * 5.0f) * 0.016f;
         cone.transform.rotation.y += (30.0f - offset * 2.0f) * 0.016f;
         
         float t = float(time);
         float speed = 0.8f + (i % 2) * 0.4f;
         float t_scaled = t * speed + offset;
-
-        // Летаем вокруг куба (увеличили радиус до 4.0)
         float radius_x = 4.0f + (i % 2); 
         float radius_z = 4.0f + ((i + 1) % 2);
 
         cone.transform.position.x = sinf(t_scaled) * radius_x;
         cone.transform.position.z = sinf(t_scaled * 0.5f) * radius_z; 
-        
-        cone.transform.position.y = 3.0f + cosf(t_scaled * 2.0f) * 1.5f; 
+        cone.transform.position.y = 2.0f + cosf(t_scaled * 2.0f) * 1.5f; 
     }
     
     float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
