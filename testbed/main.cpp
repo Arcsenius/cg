@@ -24,7 +24,6 @@ struct Vertex {
   veekay::vec3 position;
   veekay::vec3 normal;
   veekay::vec2 uv;
-  // NOTE: You can add more attributes
 };
 
 struct GlobalLight {
@@ -88,14 +87,11 @@ struct Camera {
   float near_plane = default_near_plane;
   float far_plane = default_far_plane;
 
-  // NOTE: View matrix of camera (inverse of a transform)
   veekay::mat4 view() const;
 
-  // NOTE: View and projection composition
   veekay::mat4 view_projection(float aspect_ratio) const;
 };
 
-// NOTE: Scene objects
 inline namespace {
   Camera camera{
     .position = {0.0f, -0.5f, -3.0f}
@@ -104,7 +100,6 @@ inline namespace {
   std::vector<Model> models;
 }
 
-// NOTE: Vulkan objects
 inline namespace {
   VkShaderModule vertex_shader_module;
   VkShaderModule fragment_shader_module;
@@ -264,8 +259,6 @@ veekay::mat4 Camera::view_projection(float aspect_ratio) const {
   return view() * projection;
 }
 
-// NOTE: Loads shader byte code from file
-// NOTE: Your shaders are compiled via CMake with this code too, look it up
 VkShaderModule loadShaderModule(const char* path) {
   std::ifstream file(path, std::ios::binary | std::ios::ate);
   size_t size = file.tellg();
@@ -293,7 +286,7 @@ void initialize(VkCommandBuffer cmd) {
   VkDevice& device = veekay::app.vk_device;
   VkPhysicalDevice& physical_device = veekay::app.vk_physical_device;
 
-  { // NOTE: Build graphics pipeline
+  { 
     vertex_shader_module = loadShaderModule("./shaders/shader.vert.spv");
     if (!vertex_shader_module) {
       std::cerr << "Failed to load Vulkan vertex shader from file\n";
